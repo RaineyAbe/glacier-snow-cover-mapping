@@ -18,6 +18,7 @@ To clone the `planet-snow` repository into your local directory, execute the fol
 ####2. Create Conda environment from .yml file
 To ensure all required packages for the notebooks are installed, I recommend creating a conda environment using the `environment.yml` file provided. Create a conda environment with all necessary Python packages installed by executing the following command:
 `conda env create -f environment.yml`
+[Here](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) is a helpful resource for working with Conda environments. 
 
 ####3. Activate Conda environment
 To activate the Conda environment, execute the following command:
