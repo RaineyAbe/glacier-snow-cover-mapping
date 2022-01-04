@@ -1,6 +1,6 @@
 # planet-snow GitHub repository
 #### Rainey Aberle (raineyaberle@u.boisestate.edu), Boise State University
-#### Fall 2021
+#### Winter 2021
 
 ### Description
 Preliminary notebooks & short workflow for detecting snow-covered area in PlanetScope 4-band imagery.
