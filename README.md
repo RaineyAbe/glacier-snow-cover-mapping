@@ -1,6 +1,6 @@
-# planet-snow GitHub repository
+# planet-snow
 #### Rainey Aberle (raineyaberle@u.boisestate.edu), Boise State University
-#### Winter 2021
+#### Last updated: January 2022
 
 ### Description
 Preliminary notebooks & short workflow for detecting snow-covered area in PlanetScope 4-band imagery.
@@ -8,7 +8,7 @@ Preliminary notebooks & short workflow for detecting snow-covered area in Planet
 1. `planetAPI_image_download.ipynb`: bulk download PlanetScope 4-band images using the Planet API
 2. `stitch_by_date.ipynb`: stitch all images captured on the same date
 3. `develop_mndsi_threshold.ipynb`: preliminary threshold developed for a modified NDSI (MNDSI) - the normalized difference of PlanetScope NIR and red bands - using manually digitized snow line picks (from PlanetScope RGB imagery) on Wolverine Glacier, AK for August 2021
-4. `compute_mndsi.ipynb`: apply MNDSI threshold to images to create timeseries of snow-covered area in area of interest (AOI)
+4. `calculate_snow_covered_area.ipynb`: apply MNDSI threshold to images to create timeseries of snow-covered area in area of interest (AOI)
 
 ### Installation
 #### 1. Clone repository
