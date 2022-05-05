@@ -21,14 +21,18 @@ To ensure all required packages for the notebooks are installed, I recommend cre
 
 `conda env create -f environment.yml`
 
-[Here is a helpful resource](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) for working with Conda environments. 
+[Here is a helpful resource](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) for working with Conda environments.
 
 #### 3. Activate Conda environment
 To activate the Conda environment, execute the following command:
 
 `conda activate planet-snow`
 
-You can now run any of the notebooks in the repository. 
+#### 4. Add Conda environment as an ipykernel
 
-#### 4. Open a Jupyter Notebook
-To open a jupyter notebook, navigate (`cd`) to the `planet-snow` directory on your machine if you have not already and run the following command: `jupyter notebook notebook.ipynb`, replacing `notebook.ipynb` with the name of the notebook you would like to open. The notebook should open in a browser. 
+Now, run the following command in a terminal so that you can use the `planet-snow` environment in Jupyter Notebook:
+
+`python -m ipykernel install --user --name=planet-snow`
+
+#### 5. Open a Jupyter Notebook
+To open a jupyter notebook, navigate (`cd`) to the `planet-snow` directory on your machine if you have not already and run the following command: `jupyter notebook notebook.ipynb`, replacing `notebook.ipynb` with the name of the notebook you would like to open. The notebook should open in a browser.
