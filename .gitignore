@@ -1,5 +1,5 @@
 # temporary files
 *.asv
-*.ipynbcheckpoints
-*.ipynbcheckpoints/*
-__pychache__/
+*.ipynb_checkpoints
+*.ipynb_checkpoints/*
+__pycache__
