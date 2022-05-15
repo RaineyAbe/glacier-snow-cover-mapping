@@ -158,6 +158,7 @@ dependencies:
     - charset-normalizer==2.0.10
     - click-plugins==1.1.1
     - cligj==0.7.2
+    - contextily==1.2.0
     - cycler==0.11.0
     - dataclasses==0.8
     - decorator==5.1.1
@@ -168,7 +169,10 @@ dependencies:
     - flit-core==3.6.0
     - folium==0.12.1.post1
     - gdal==3.4.1
+    - geographiclib==1.52
     - geopandas==0.10.2
+    - geopy==2.2.0
+    - h5py==3.6.0
     - idna==3.3
     - imageio==2.13.5
     - importlib-resources==5.4.0
@@ -180,6 +184,7 @@ dependencies:
     - jupyterlab-pygments==0.1.2
     - mapclassify==2.4.3
     - matplotlib-inline==0.1.3
+    - mercantile==1.2.1
     - munch==2.5.0
     - munkres==1.1.4
     - nbclient==0.5.10
@@ -187,7 +192,7 @@ dependencies:
     - nest-asyncio==1.5.4
     - networkx==2.6.3
     - notebook==6.4.7
-    - numpy==1.22.1
+    - numpy==1.22.3
     - olefile==0.46
     - packaging==21.3
     - pandas==1.3.5
@@ -210,6 +215,7 @@ dependencies:
     - pytz==2021.3
     - pywavelets==1.2.0
     - requests==2.27.1
+    - rioxarray==0.10.2
     - scikit-image==0.19.1
     - send2trash==1.8.0
     - six==1.16.0
@@ -225,5 +231,7 @@ dependencies:
     - wcwidth==0.2.5
     - webencodings==0.5.1
     - wheel==0.37.1
+    - xarray==2022.3.0
     - xyzservices==2022.1.0
     - zipp==3.7.0
+prefix: /Users/raineyaberle/opt/anaconda3/envs/planet-snow
