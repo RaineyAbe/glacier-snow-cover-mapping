@@ -1,4 +1,5 @@
 # orders.py
+# Functions used in the planetAPI_image_download.ipynb notebook
 # Modified from Planet Labs notebooks: https://github.com/planetlabs/notebooks/tree/master/jupyter-notebooks
 
 from planet.api import filters
@@ -10,8 +11,14 @@ import pyproj
 from functools import partial
 import requests
 import json
+import time
+import rasterio as rio
+from rasterio import features as rfeatures
+from pathlib import Path
+import numpy as np
 
-def build_request(AOI_shape, max_cloud_cover, start_date, end_date,
+
+def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
                   item_type, asset_type):
     '''Compile input filters to create request for Planet API search'''
     
@@ -42,7 +49,6 @@ def build_request(AOI_shape, max_cloud_cover, start_date, end_date,
       "type": "AndFilter",
       "config": [geometry_filter, date_range_filter, cloud_cover_filter]
     }
-
 
     request = {
         "item_types": [item_type],
@@ -109,28 +115,53 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
         }
     return request
 
+def search_pl_api(request, limit):
+    '''Search Planet API using request'''
+    client = api.ClientV1(api_key=os.environ['PL_API_KEY'])
+    result = client.quick_search(request)
+    
+    # note that this returns a generator
+    return result.items_iter(limit=limit)
+    
 def place_order(orders_url, search_request, auth):
     # set content type to json
     headers = {'content-type': 'application/json'}
     
     response = requests.post(orders_url, data=json.dumps(search_request), auth=auth, headers=headers)
-    print(response)
+    print(response.json())
     order_id = response.json()['id']
     print(order_id)
     order_url = orders_url + '/' + order_id
     return order_url
     
-def create_client():
-    '''Create a client through the API using API key defined in environment'''
-    return api.ClientV1(api_key=os.environ['PL_API_KEY'])
+def poll_for_success(order_url, auth, num_loops=30):
+    count = 0
+    while(count < num_loops):
+        count += 1
+        r = requests.get(order_url, auth=auth)
+        response = r.json()
+        state = response['state']
+        print(state)
+        end_states = ['success', 'failed', 'partial']
+        if state in end_states:
+            break
+        time.sleep(10)
 
-def search_pl_api(request, limit):
-    '''Search Planet API using request'''
-    client = create_client()
-    result = client.quick_search(request)
+def download_results(results, overwrite=False):
+    results_urls = [r['location'] for r in results]
+    results_names = [r['name'] for r in results]
+    print('{} items to download'.format(len(results_urls)))
     
-    # note that this returns a generator
-    return result.items_iter(limit=limit)
+    for url, name in zip(results_urls, results_names):
+        path = Path(os.path.join(out_folder,name)) #pathlib.Path(os.path.join('data', name))
+        
+        if overwrite or not path.exists():
+            print('downloading {} to {}'.format(name, path))
+            r = requests.get(url, allow_redirects=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            open(path, 'wb').write(r.content)
+        else:
+            print('{} already exists, skipping {}'.format(path, name))
 
 def get_utm_projection_fcn(shape):
     # define projection
@@ -215,6 +246,9 @@ def get_overlap_shapes_utm(items, aoi_shape):
     for i in items:
         yield _calculate_overlap(i)
 
+def filter_by_coverage(overlaps, dimensions, bounds):
+    
+
 def calculate_coverage(overlaps, dimensions, bounds):
     
     # get dimensions of coverage raster
@@ -234,7 +268,7 @@ def calculate_coverage(overlaps, dimensions, bounds):
     # e = height of a pixel (typically negative)
     # f = y-coordinate of the of the upper-left corner of the upper-left pixel
     # ref: http://www.perrygeo.com/python-affine-transforms.html
-    transform = rasterio.Affine(width, 0, mminx, 0, height, mmaxy)
+    transform = rio.Affine(width, 0, mminx, 0, height, mmaxy)
     
     coverage = np.zeros(dimensions, dtype=np.uint16)
     for overlap in overlaps:
