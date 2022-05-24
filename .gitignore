@@ -1,9 +1,7 @@
 # temporary files
 *.asv
-*.ipynb_checkpoints
-*.ipynb_checkpoints/*
-__pycache__
-*/__pycache__
+*.ipynb_checkpoints*
+*__pycache__*
 
-# large figure folders
-figures/adjusted-radiometry/*
+# .zip folders of study area shapefiles
+Inputs-outputs/*.zip
