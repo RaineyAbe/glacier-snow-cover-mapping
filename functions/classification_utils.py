@@ -34,7 +34,7 @@ def crop_images_to_AOI(im_path, im_names, AOI):
         # check if file exists in file already
         cropped_im_fn = cropped_im_path + im_name[0:15] + '_crop.tif'
         if os.path.exists(cropped_im_fn)==True:
-            print('cropped image already exists in directory')
+            print('cropped image already exists in directory...skipping.')
         else:
             # mask image pixels outside the AOI
             AOI_bb = [AOI.bounds]
@@ -51,11 +51,12 @@ def crop_images_to_AOI(im_path, im_names, AOI):
     return cropped_im_path
 
 
-def classify_image(im, clf, plot_output):
+def classify_image(im, clf, feature_cols, plot_output):
     '''Function to classify input image using a pre-trained classifier
     INPUTS:
         - im = input image (rasterio object)
         - clf = previously trained SciKit Learn Classifier (sklearn.classifier)
+        - feature_cols = features used by classifier (array of pandas.DataFrame columns, e.g. ['blue', 'green', 'red'])
         - plot_output = logical input, where True = plot RGB image and classified image and False = no plots output
     OUTPUTS:
         - im_x = x coordinates of image (numpy.array)
@@ -92,12 +93,14 @@ def classify_image(im, clf, plot_output):
     
     # save in Pandas dataframe
     df = pd.DataFrame()
+    df['blue'] = b[I_real].flatten()
+    df['green'] = g[I_real].flatten()
     df['red'] = r[I_real].flatten()
     df['NIR'] = nir[I_real].flatten()
     df['NDSI'] = ndsi[I_real].flatten()
 
     # classify snow
-    snow_array = clf.predict(df[['red', 'NIR', 'NDSI']])
+    snow_array = clf.predict(df[feature_cols])
     
     # reshape from flat array to original shape
     snow = np.zeros((np.shape(r)[0], np.shape(r)[1]))
@@ -106,7 +109,7 @@ def classify_image(im, clf, plot_output):
     
     # plot
     if plot_output==True:
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12,10), gridspec_kw={'height_ratios': [3, 1]})
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10,10), gridspec_kw={'height_ratios': [3, 1]})
         plt.rcParams.update({'font.size': 14, 'font.sans-serif': 'Arial'})
         # RGB image
         ax1.imshow(np.dstack([im.read(3), im.read(2), im.read(1)]),
@@ -114,8 +117,10 @@ def classify_image(im, clf, plot_output):
         ax1.set_xlabel('Easting [km]')
         ax1.set_ylabel('Northing [km]')
         # snow
-        snow_plot = ax2.imshow(np.where(snow==1, snow, np.nan), cmap='Blues', clim=(0,1),
+        ax2.imshow(np.where(snow==1, 1, np.nan), cmap='Blues', clim=(0,1.5),
                     extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
+        ax2.imshow(np.where(snow==0, 0, np.nan), cmap='Oranges', clim=(-1,2),
+        extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
         ax2.set_xlabel('Easting [km]')
         # image bands histogram
         h_b = ax3.hist(b.flatten(), color='blue', histtype='step', linewidth=2, bins=100, label='blue')
@@ -126,10 +131,12 @@ def classify_image(im, clf, plot_output):
         ax3.set_ylabel('Pixel counts')
         ax3.legend(loc='upper right')
         ax3.set_ylim(0,np.max([h_nir[0][1:], h_g[0][1:], h_r[0][1:], h_b[0][1:]])+5000)
+        ax3.grid()
         # snow classification histogram
-        h_snow = ax4.hist(snow.flatten())
+        ax4.hist(snow.flatten())
         ax4.set_xlabel('Snow classification')
-        fig.colorbar(snow_plot, ax=ax2, shrink=0.5)
+        ax4.grid()
+#        fig.colorbar(snow_plot, ax=ax2, shrink=0.5)
         fig.tight_layout()
         
         return im_x, im_y, snow, fig
@@ -137,9 +144,7 @@ def classify_image(im, clf, plot_output):
     else:
         return im_x, im_y, snow
     
-
 def calculate_SCA(im, snow):
-
     '''Function to calculated total snow-covered area (SCA) from using an input image and a snow binary mask of the same resolution and grid.
     INPUTS:
         - im: input image ()
@@ -152,3 +157,6 @@ def calculate_SCA(im, snow):
     SCA = pA * snow_count # area of snow [m^2]
 
     return SCA
+    
+def determine_min_snow_elevation():
+

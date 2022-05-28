@@ -18,7 +18,14 @@ def into_range(x, range_min, range_max):
     return (((shiftedx % delta) + delta) % delta) + range_min
     
 def sunpos(when, location, refraction):
-
+    '''Function to determine the sun azimuth and elevation using the date and location.
+    INPUTS:
+        - when =
+        - location =
+        - refraction =
+    OUTPUTS:
+        - azimuth
+        - elevation '''
     # Extract the passed data
     year, month, day, hour, minute, second = when
     latitude, longitude = location
@@ -96,18 +103,19 @@ def sunpos(when, location, refraction):
 
 def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_name, im_path, DEM_path, plot_results):
     '''Function to adjust image using by generating a hillshade model and minimizing the standard deviation of each band within the defined SCA
-        INPUTS:
-            - meta_content = content of the image metadata file (str array)
-            - max_cloud_cover = max. cloud cover [%] - if image has cloud cover above max_cloud_cover, exits function (float)
-            - crs = Coordinate Reference System (EPSG code)
-            - SCA = snow-covered area where the band standard deviation is minimized (shapely.geometry.polygon.Polygon)
-            - im = image (rasterio file)
-            - im_name = name of image (str)
-            - im_path = path to image in directory (str)
-            - DEM_path = path to DEM used to generate hillshade model (str)
-            - plot_results = True/False to plot results
-        OUTPUTS:
-            - b_corrected, g_corrected, r_corrected, nir_corrected = resulting corrected Blue, Green, Red, and NIR bands, respectively (numpy.array)'''
+    INPUTS:
+        - meta_content = content of the image metadata file (str array)
+        - max_cloud_cover = max. cloud cover [%] - if image has cloud cover above max_cloud_cover, exits function (float)
+        - crs = Coordinate Reference System (EPSG code)
+        - SCA = snow-covered area where the band standard deviation is minimized (shapely.geometry.polygon.Polygon)
+        - im = image (rasterio file)
+        - im_name = name of image (str)
+        - im_path = path to image in directory (str)
+        - DEM_path = path to DEM used to generate hillshade model (str)
+        - plot_results = True/False to plot results
+    OUTPUTS:
+        - im_corrected_name = name of hillshade-corrected image saved to file (str)
+        - out_path = directory path to the corrected image (str)'''
 
     print('HILLSHADE CORRECTION')
     # -----Load instrument name and cloud cover percentage from metadata
@@ -184,7 +192,7 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
             if os.path.exists(hs_fn):
                 print('hillshade model already exists in directory, loading...')
             else:
-                print('creating hillshade model...')
+#                print('creating hillshade model...')
                 # construct the gdal_merge command
                 # modified from: https://github.com/clhenrick/gdal_hillshade_tutorial
                 # gdaldem hillshade -az aximuth -z elevation dem.tif hillshade.tif
@@ -195,7 +203,7 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
 
             # -----load hillshade model from file
             hs = rio.open(hs_fn)
-            print('hillshade model loaded from file...')
+#            print('hillshade model loaded from file...')
             # coordinates
             hs_x = np.linspace(hs.bounds.left, hs.bounds.right, num=np.shape(hs.read(1))[1])
             hs_y = np.linspace(hs.bounds.top, hs.bounds.bottom, num=np.shape(hs.read(1))[0])
@@ -208,7 +216,7 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
                 print('resampled hillshade model already exists in directory, loading...')
             # resample if it doesn't exist
             else:
-                print('resampling hillshade...')
+#                print('resampling hillshade...')
                 # create interpolation object
                 f = interp2d(hs_x, hs_y, hs.read(1))
                 hs_resamp = f(im_x, im_y)
@@ -245,7 +253,7 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
     #        plt.show()
             
             # -----loop through hillshade scalar multipliers
-            print('solving for optimal band scalars...')
+#            print('solving for optimal band scalars...')
             # define scalars to test
             hs_scalars = np.linspace(0,0.5,num=21)
             # blue
@@ -285,21 +293,21 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
             r_scalar = hs_scalars[Ir]
             Inir = np.where(nir_SCA_sigma==np.min(nir_SCA_sigma))[0][0]
             nir_scalar = hs_scalars[Inir]
-            print('Scalars:  Blue   |   Green   |   Red   |   NIR')
+            print('Optimal scalars:  Blue   |   Green   |   Red   |   NIR')
             print(b_scalar, g_scalar, r_scalar, nir_scalar)
 
             # -----Apply optimal hillshade model correction
-            print('correcting bands using optimal scalar...')
+#            print('correcting bands using optimal scalar...')
             b_corrected = b - (hs_norm * hs_scalars[Ib])
             g_corrected = g - (hs_norm * hs_scalars[Ig])
             r_corrected = r - (hs_norm * hs_scalars[Ir])
             nir_corrected = nir - (hs_norm * hs_scalars[Inir])
 
-            # replace no data values with NaN
-            b_corrected[b==0] = np.nan
-            g_corrected[g==0] = np.nan
-            r_corrected[r==0] = np.nan
-            nir_corrected[nir==0] = np.nan
+            # -----Replace previously 0 values with 0 to signify no-data
+            b_corrected[b==0] = 0
+            g_corrected[g==0] = 0
+            r_corrected[r==0] = 0
+            nir_corrected[nir==0] = 0
                 
             # -----Plot original and corrected images and band histograms
             if plot_results==True:
@@ -343,7 +351,7 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
                 os.mkdir(out_path)
                 print('created output directory:',out_path)
             # file name
-            im_corrected_name = out_path+im_name[0:-4]+'_hs-corrected.tif'
+            im_corrected_name = im_name[0:-4]+'_hs-corrected.tif'
             # metadata
             out_meta = im.meta.copy()
             out_meta.update({'driver':'GTiff',
@@ -354,12 +362,12 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
                              'crs':im.crs,
                              'transform':im.transform})
             # write to file
-            with rio.open(im_corrected_name, mode='w',**out_meta) as dst:
+            with rio.open(out_path+im_corrected_name, mode='w',**out_meta) as dst:
                 dst.write_band(1,b_corrected)
                 dst.write_band(2,g_corrected)
                 dst.write_band(3,r_corrected)
                 dst.write_band(4,nir_corrected)
-            print('adjusted image saved to file:'+im_corrected_name)
+            print('corrected image saved to file: '+im_corrected_name)
                 
         else:
             print('image does not contain SCA... skipping.')
@@ -370,10 +378,17 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
             
 def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path, SCA, plot_results):
     '''Function to adjust PlanetScope image band radiometry using the band values in a defined snow-covered area (SCA) and the expected surface reflectance of snow.
-        INPUTS:
-            -
-        OUTPUTS:
-            - '''
+    INPUTS:
+        - meta_content = content of the image metadata file (str array)
+        - max_cloud_cover = max. cloud cover [%] - if image has cloud cover above max_cloud_cover, exits function (float)
+        - im = image (rasterio file)
+        - im_name = name of image (str)
+        - im_path = path to image in directory (str)
+        - SCA = snow-covered area where the band standard deviation is minimized (shapely.geometry.polygon.Polygon)
+        - plot_results = True/False to plot results
+    OUTPUTS:
+        - im_adj_name = name of adjusted image saved to file (str)
+        - out_path = directory path to the adjusted image (str)'''
     
     print('RADIOMETRIC ADJUSTMENT')
     # -----Load instrument name and cloud cover percentage from metadata
@@ -391,7 +406,7 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
     if cc > max_cloud_cover:
         print('cloud cover exceeds max_cloud_cover... skipping')
         out_path = 'N/A'
-        im_corrected_name = 'N/A'
+        im_adj_name = 'N/A'
         
     else:
         # -----Define desired SR values at the bright area and darkest point for each band
@@ -431,10 +446,7 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
             
             # check that values are greater than zero within the SCA
             f_b = interp2d(x, y, b)
-            print(np.nanmedian(f_b(x_pts, y_pts)))
-            print(~np.isnan(np.nanmedian(f_b(x_pts, y_pts))))
             if (np.nanmedian(f_b(x_pts, y_pts))>0) & (~np.isnan(np.nanmedian(f_b(x_pts, y_pts)))):
-                print('yes')
                 # adjust SR using bright and dark points
                 # band_adjusted = band*A - B
                 # A = (bright_adjusted - dark_adjusted) / (bright - dark)
@@ -471,11 +483,11 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
                 nir_adj = (nir * A) - B
                 nir_adj = np.where(nir==0, np.nan, nir_adj) # replace no data values with nan
 
-                # replace no data values with NaN
-                b_adj[b==0] = np.nan
-                g_adj[g==0] = np.nan
-                r_adj[r==0] = np.nan
-                nir_adj[nir==0] = np.nan
+                # -----Replace previously 0 values with 0 to signify no-data
+                b_adj[b==0] = 0
+                g_adj[g==0] = 0
+                r_adj[r==0] = 0
+                nir_adj[nir==0] = 0
                 
                 # print new values at the bright and dark points to check for success
         #         f_b_adj = interp2d(x, y, b_adj)
@@ -489,7 +501,7 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
                         
                 # plot results
                 if (plot_results==True):
-                    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2,figsize=(16,10),gridspec_kw={'height_ratios': [3,1]})
+                    fig, ((ax1, ax2),(ax3,ax4)) = plt.subplots(2,2, figsize=(16,12), gridspec_kw={'height_ratios': [3, 1]})
                     plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
                     # original image
                     im_original = ax1.imshow(np.dstack([r, g, b]),
@@ -501,30 +513,27 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
                     ax1.set_ylabel('Northing [km]')
                     ax1.set_title('Original image')
                     # adjusted image
-                    im_adjusted = ax2.imshow(np.dstack([r_adj, g_adj, b_adj]),
-                                extent=(np.min(x)/1000, np.max(x)/1000, np.min(y)/1000, np.max(y)/1000))
+                    ax2.imshow(np.dstack([r_adj, g_adj, b_adj]),
+                        extent=(np.min(x)/1000, np.max(x)/1000, np.min(y)/1000, np.max(y)/1000))
                     ax2.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]],
                              color='black', linewidth=2, label='SCA')
                     ax2.set_xlabel('Easting [km]')
                     ax2.set_title('Adjusted image')
-                    # histograms
-                    h1_nir = ax3.hist(nir.flatten(), color='purple', bins=100, alpha=0.5, label='NIR')
-                    h1_b = ax3.hist(b.flatten(), color='blue', bins=100, alpha=0.5, label='blue')
-                    h1_g = ax3.hist(g.flatten(), color='green', bins=100, alpha=0.5, label='green')
-                    h1_r = ax3.hist(r.flatten(), color='red', bins=100, alpha=0.5, label='red')
+                    # band histograms
+                    ax3.hist(nir[nir>0].flatten(), bins=100, histtype='step', linewidth=1, color='purple', label='NIR')
+                    ax3.hist(b[b>0].flatten(), bins=100, histtype='step', linewidth=1, color='blue', label='Blue')
+                    ax3.hist(g[g>0].flatten(), bins=100, histtype='step', linewidth=1, color='green', label='Green')
+                    ax3.hist(r[r>0].flatten(), bins=100, histtype='step', linewidth=1, color='red', label='Red')
                     ax3.set_xlabel('Surface reflectance')
                     ax3.set_ylabel('Pixel counts')
                     ax3.grid()
-                    ax3.legend(loc='right')
-                    ax3.set_ylim(0,np.max([h1_nir[0][1:], h1_g[0][1:], h1_r[0][1:], h1_b[0][1:]])+5000)
-                    h2_nir = ax4.hist(nir_adj.flatten(), color='purple', bins=100, alpha=0.5, label='NIR')
-                    h2_b = ax4.hist(b_adj.flatten(), color='blue', bins=100, alpha=0.5, label='blue')
-                    h2_g = ax4.hist(g_adj.flatten(), color='green', bins=100, alpha=0.5, label='green')
-                    h2_r = ax4.hist(r_adj.flatten(), color='red', bins=100, alpha=0.5, label='red')
+                    ax3.legend()
+                    ax4.hist(nir_adj[nir_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='purple', label='NIR')
+                    ax4.hist(b_adj[b_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='blue', label='Blue')
+                    ax4.hist(g_adj[g_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='green', label='Green')
+                    ax4.hist(r_adj[r_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='red', label='Red')
                     ax4.set_xlabel('Surface reflectance')
-                    ax4.set_ylim(0,np.max([h1_nir[0][1:], h1_g[0][1:], h1_r[0][1:], h1_b[0][1:]])+5000)
                     ax4.grid()
-                    fig.suptitle(im_name[0:8]+' '+im_name[9:11]+':'+im_name[11:13]+':'+im_name[13:15])
                     fig.tight_layout()
                     plt.show()
 
@@ -535,7 +544,7 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
                     os.mkdir(out_path)
                     print('created output directory:',out_path)
                 # file name
-                im_adjusted_name = out_path+im_name[0:-4]+'_adj.tif'
+                im_adj_name = im_name[0:-4]+'_adj.tif'
                 # metadata
                 out_meta = im.meta.copy()
                 out_meta.update({'driver':'GTiff',
@@ -546,21 +555,21 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
                                  'crs':im.crs,
                                  'transform':im.transform})
                 # write to file
-                with rio.open(im_adjusted_name, mode='w',**out_meta) as dst:
+                with rio.open(out_path+im_adj_name, mode='w',**out_meta) as dst:
                     dst.write_band(1,b_adj)
                     dst.write_band(2,g_adj)
                     dst.write_band(3,r_adj)
                     dst.write_band(4,nir_adj)
-                print('adjusted image saved to file')
+                print('adjusted image saved to file: '+im_adj_name)
 
             else:
                 print('no real values within SCA... skipping.')
                 out_path = 'N/A'
-                im_corrected_name = 'N/A'
+                im_adj_name = 'N/A'
         else:
             print('image does not contain SCA... skipping.')
             out_path = 'N/A'
-            im_corrected_name = 'N/A'
+            im_adj_name = 'N/A'
                 
-    return im_corrected_name, out_path
+        return im_adj_name, out_path
 
