@@ -116,16 +116,12 @@ def sunpos(when, location, refraction):
     return (round(azimuth, 2), round(elevation, 2))
 
 # --------------------------------------------------
-def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_name, im_path, DEM_path, hs_path, out_path, skip_clipped, plot_results):
+def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path, out_path, skip_clipped, plot_results):
     '''
     Adjust image using by generating a hillshade model and minimizing the standard deviation of each band within the defined SCA
     
     Parameters
     ----------
-    meta_content: str array
-        content of the image metadata file
-    max_cloud_cover: float
-        maximum cloud cover [%] - if image has cloud cover above max_cloud_cover, exits function
     crs: float
         Coordinate Reference System (EPSG code)
     SCA:  shapely.geometry.polygon.Polygon
@@ -156,20 +152,20 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
     print('HILLSHADE CORRECTION')
     # -----Load instrument name and cloud cover percentage from metadata
     # read the content of the file opened
-    inst = meta_content[53].split('>')[1]
-    if "PS2" in inst:
-        inst = inst[0:3]
-    elif "PSB" in inst:
-        inst = inst[0:6]
-    # read cloud cover percentage from the file
-    cc = meta_content[148].split('>')[1]
-    cc = cc.split('<')[0]
-    cc = float(cc)
-    # return if cloud cover is above max_cloud_cover
-    if cc > max_cloud_cover:
-        print('cloud cover exceeds max_cloud_cover... skipping')
-        im_corrected_name = 'N/A'
-        return im_corrected_name
+#    inst = meta_content[53].split('>')[1]
+#    if "PS2" in inst:
+#        inst = inst[0:3]
+#    elif "PSB" in inst:
+#        inst = inst[0:6]
+#    # read cloud cover percentage from the file
+#    cc = meta_content[148].split('>')[1]
+#    cc = cc.split('<')[0]
+#    cc = float(cc)
+#    # return if cloud cover is above max_cloud_cover
+#    if cc > max_cloud_cover:
+#        print('cloud cover exceeds max_cloud_cover... skipping')
+#        im_corrected_name = 'N/A'
+#        return im_corrected_name
 
     # -----Read image bands
     im_scalar = 10000
@@ -413,16 +409,12 @@ def apply_hillshade_correction(meta_content, max_cloud_cover, crs, SCA, im, im_n
     return im_corrected_name
     
 # --------------------------------------------------
-def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path, SCA, out_path, skip_clipped, plot_results):
+def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, plot_results):
     '''
     Adjust PlanetScope image band radiometry using the band values in a defined snow-covered area (SCA) and the expected surface reflectance of snow.
     
     Parameters
     ----------
-    meta_content: str array
-        content of the image metadata file
-    max_cloud_cover: float
-        maximum image cloud cover [%] - function returns if image has cloud cover above max_cloud_cover
     im: rasterio file
         input image
     im_name: str
@@ -448,20 +440,20 @@ def adjust_image_radiometry(meta_content, max_cloud_cover, im, im_name, im_path,
     
     # -----Load instrument name and cloud cover percentage from metadata
     # read instrument name from the file
-    inst = meta_content[53].split('>')[1]
-    if "PS2" in inst:
-        inst = inst[0:3]
-    elif "PSB" in inst:
-        inst = inst[0:6]
-    # read cloud cover percentage from the file
-    cc = meta_content[148].split('>')[1]
-    cc = cc.split('<')[0]
-    cc = float(cc)
-    # exit if cloud cover is above 20%
-    if cc > max_cloud_cover:
-        print('cloud cover exceeds max_cloud_cover... skipping')
-        im_adj_name = 'N/A'
-        return im_adj_name
+#    inst = meta_content[53].split('>')[1]
+#    if "PS2" in inst:
+#        inst = inst[0:3]
+#    elif "PSB" in inst:
+#        inst = inst[0:6]
+#    # read cloud cover percentage from the file
+#    cc = meta_content[148].split('>')[1]
+#    cc = cc.split('<')[0]
+#    cc = float(cc)
+#    # exit if cloud cover is above 20%
+#    if cc > max_cloud_cover:
+#        print('cloud cover exceeds max_cloud_cover... skipping')
+#        im_adj_name = 'N/A'
+#        return im_adj_name
         
     # -----Define desired SR values at the bright area and darkest point for each band
     # bright area
