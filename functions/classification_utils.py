@@ -9,15 +9,26 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.interpolate import interp2d
 
 def crop_images_to_AOI(im_path, im_names, AOI):
-    '''Function to crop single image to AOI
-    INPUTS:
-        - im_path: path to images (str)
-        - im_names: file names of images to crop (str array)
-        - AOI: cropping region, where everything outside the AOI will be cropped ()
-    OUTPUTS:
-        - cropped_im_path: path to cropped images (str)'''
+    '''
+    Crop images to AOI.
+    
+    Parameters
+    ----------
+    im_path: str
+        path in directory to images
+    im_names: str array
+        file names of images to crop (str array)
+    AOI: geopandas.geodataframe.GeoDataFrame
+        cropping region - everything outside the AOI will be masked
+    
+    Returns
+    ----------
+    cropped_im_path: str
+        path in directory to cropped images
+    '''
     
     # make folder for cropped images if it does not exist
     cropped_im_path = im_path+'../cropped/'
@@ -52,17 +63,31 @@ def crop_images_to_AOI(im_path, im_names, AOI):
 
 
 def classify_image(im, clf, feature_cols, plot_output):
-    '''Function to classify input image using a pre-trained classifier
-    INPUTS:
-        - im = input image (rasterio object)
-        - clf = previously trained SciKit Learn Classifier (sklearn.classifier)
-        - feature_cols = features used by classifier (array of pandas.DataFrame columns, e.g. ['blue', 'green', 'red'])
-        - plot_output = logical input, where True = plot RGB image and classified image and False = no plots output
-    OUTPUTS:
-        - im_x = x coordinates of image (numpy.array)
-        - im_y = y coordinates of image (numpy.array)
-        - snow = binary array of predicted snow presence in input image, where 0 = no snow and 1 = snow (numpy.array)
-        - fig = handle of figure if plot_output==True (matplotlib.pyplot.figure)'''
+    '''
+    Function to classify input image using a pre-trained classifier
+    
+    Parameters
+    ----------
+    im: rasterio object
+        input image
+    clf: sklearn.classifier
+        previously trained SciKit Learn Classifier
+    feature_cols: array of pandas.DataFrame columns, e.g. ['blue', 'green', 'red']
+        features used by classifier ()
+    plot_output: bool
+        whether to plot RGB and classified image
+        
+    Returns
+    ----------
+    im_x: numpy.array
+        x coordinates of input image
+    im_y: numpy.array
+        y coordinates of image
+    snow: numpy.array
+        binary array of predicted snow presence in input image, where 0 = no snow and 1 = snow
+    fig: matplotlib.pyplot.figure
+        handle of figure if plot_output==True
+    '''
 
     # define bands
     b = im.read(1).astype(float)
@@ -89,7 +114,7 @@ def classify_image(im, clf, feature_cols, plot_output):
     im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(r)[0])
     
     # Find indices of real numbers (no NaNs allowed in classification)
-    I_real = np.where(~np.isnan(r))
+    I_real = np.where((~np.isnan(b)) & (~np.isnan(g)) & (~np.isnan(r)) & (~np.isnan(nir)) & (~np.isnan(ndsi)))
     
     # save in Pandas dataframe
     df = pd.DataFrame()
@@ -103,7 +128,7 @@ def classify_image(im, clf, feature_cols, plot_output):
     snow_array = clf.predict(df[feature_cols])
     
     # reshape from flat array to original shape
-    snow = np.zeros((np.shape(r)[0], np.shape(r)[1]))
+    snow = np.zeros((np.shape(b)[0], np.shape(b)[1]))
     snow[:] = np.nan
     snow[I_real] = snow_array
     
@@ -129,7 +154,7 @@ def classify_image(im, clf, feature_cols, plot_output):
         h_nir = ax3.hist(nir.flatten(), color='brown', histtype='step', linewidth=2, bins=100, label='NIR')
         ax3.set_xlabel('Surface reflectance')
         ax3.set_ylabel('Pixel counts')
-        ax3.legend(loc='upper right')
+        ax3.legend()
         ax3.set_ylim(0,np.max([h_nir[0][1:], h_g[0][1:], h_r[0][1:], h_b[0][1:]])+5000)
         ax3.grid()
         # snow classification histogram
@@ -158,5 +183,37 @@ def calculate_SCA(im, snow):
 
     return SCA
     
-def determine_min_snow_elevation():
+def determine_min_snow_elev(DEM, snow, im, im_x, im_y):
+
+    # extract DEM info
+    DEM_x = np.linspace(DEM.bounds.left, DEM.bounds.right, num=np.shape(DEM)[1])
+    DEM_y = np.linspace(DEM.bounds.top, DEM.bounds.bottom, num=np.shape(DEM)[0])
+    DEM_elev = DEM.read(1)
+    
+    # extract one band info
+    b = im.read(1)
+    
+    # interpolate elevation from DEM at image points
+    f = interp2d(DEM_x, DEM_y, DEM_elev)
+    im_elev = f(im_x, im_y)
+    
+    # minimum elevation of the image where data exist
+    im_elev_real = np.where((b>0) & (~np.isnan(b)), im_elev, np.nan)
+    im_elev_min = np.nanmin(im_elev_real)
+    
+    # extract elevations where snow is present
+    snow_elev = im_elev[snow==1]
+    
+#    print(im_elev_real, snow_elev)
+    
+    # save minimum elevation where snow is present
+    snow_elev_min = np.nanmin(snow_elev)
+    
+#    print(snow_elev_min, im_elev_min)
+    
+    return snow_elev_min, im_elev_min
+    
+        
+    
+    
 
