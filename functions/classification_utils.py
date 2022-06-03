@@ -234,15 +234,12 @@ def determine_snow_elevs(DEM, snow, im, im_dt, im_x, im_y, plot_output):
     
     # extract elevations where snow is present
     snow_elev = im_elev[snow==1]
-        
-    # save minimum elevation where snow is present
-    snow_elev_min = np.nanmin(snow_elev)
     
     # plot snow elevations histogram
     if plot_output:
         plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir)
     
-    return snow_elev_min, im_elev_min
+    return snow_elev
     
 # -----function to convert Pandas gdf to ee.FeatureCollection
 # from: https://bikeshbade.com.np/tutorials/Detail/?title=Geo-pandas%20data%20frame%20to%20GEE%20feature%20collection%20using%20Python&code=13
