@@ -11,7 +11,70 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp2d
+import ee
+import geemap
 
+def query_GEE_for_DEM(AOI, im_path, im_names):
+    '''Query GEE for the ASTER Global DEM, clip to the AOI, and return as a numpy array.
+    
+    Parameters
+    ----------
+    AOI: geopandas.geodataframe.GeoDataFrame
+        area of interest used for clipping the DEM
+    im_path: string
+        full path to the directory holding the images to be classified
+    im_names: list of strings
+        file names of images to be classified, located in im_path. Used to extract the desired coordinate reference system of the DEM
+    
+    Returns
+    ----------
+    DEM_np: numpy array
+        elevations extracted within the AOI
+    DEM_x: numpy array
+        vector of x coordinates of the DEM
+    DEM_y: numpy array
+        vector of y coordinates of the DEM
+    AOI_UTM: geopandas.geodataframe.GeoDataFrame
+        AOI reprojected to the coordinate reference system of the images
+    '''
+    # -----Reformat AOI for clipping DEM
+    # reproject AOI to WGS 84 for compatibility with DEM
+    AOI_WGS = AOI.to_crs(4326)
+    # reformat AOI_UTM bounding box as ee.Geometry for clipping DEM
+    AOI_WGS_bb_ee = ee.Geometry({"type": "Polygon","coordinates":
+                            [[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
+                              [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
+                              [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
+                              [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
+                              [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
+                            ]})
+
+    # -----Query GEE for ASTER Global DEM, clip to AOI
+    DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee)
+
+    # -----Grab UTM projection from images, reproject DEM and AOI
+    im = rio.open(im_path+im_names[0])
+    DEM_UTM = ee.Image.reproject(DEM, str(im.crs))
+    AOI_UTM = AOI.to_crs(str(im.crs)[5:])
+
+    # -----Convert DEM to numpy array, extract coordinates
+    DEM_np = geemap.ee_to_numpy(DEM, ['elevation'])
+    DEM_x = np.linspace(AOI_UTM.geometry.bounds.minx[0], AOI_UTM.geometry.bounds.maxx[0], num=np.shape(DEM_np)[1])
+    DEM_y = np.linspace(AOI_UTM.geometry.bounds.miny[0], AOI_UTM.geometry.bounds.maxy[0], num=np.shape(DEM_np)[0])
+
+    # -----Plot to check for success
+    fig, ax = plt.subplots(figsize=(8,8))
+    plt.rcParams.update({'font.size':14, 'font.sans-serif':'Arial'})
+    DEM_im = plt.imshow(DEM_np, cmap='Greens_r',
+                        extent=(np.min(DEM_x), np.max(DEM_x), np.min(DEM_y), np.max(DEM_y)))
+    AOI_UTM.plot(ax=ax, facecolor='none', edgecolor='black', label='AOI')
+    ax.set_xlabel('Easting [m]')
+    ax.set_ylabel('Northing [m]')
+    fig.colorbar(DEM_im, ax=ax, shrink=0.5, label='Elevation [m]')
+    plt.show()
+    
+    return DEM_np, DEM_x, DEM_y, AOI_UTM
+    
 def crop_images_to_AOI(im_path, im_names, AOI):
     '''
     Crop images to AOI.
@@ -95,6 +158,8 @@ def plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir
     fig.tight_layout()
     fig.suptitle(im_dt)
     plt.show()
+    
+    return fig
 
 def classify_image(im, im_name, clf, feature_cols, out_path):
     '''
@@ -211,12 +276,34 @@ def calculate_SCA(im, snow):
 
     return SCA
     
-def determine_snow_elevs(DEM, snow, im, im_dt, im_x, im_y, plot_output):
-
-    # extract DEM info
-    DEM_x = np.linspace(DEM.bounds.left, DEM.bounds.right, num=np.shape(DEM)[1])
-    DEM_y = np.flipud(np.linspace(DEM.bounds.top, DEM.bounds.bottom, num=np.shape(DEM)[0]))
-    DEM_elev = DEM.read(1)
+def determine_snow_elevs(DEM, DEM_x, DEM_y, snow, im, im_dt, im_x, im_y, plot_output):
+    '''Determine elevations of snow-covered pixels in the classified image.
+    Parameters
+    ----------
+    DEM: numpy array
+        digital elevation model
+    DEM_x: numpy array
+        vector of x coordinates of the DEM
+    DEM_y: numpy array
+        vector of y coordinates of the DEM
+    snow: numpy array
+        binary array where snow-covered pixels = 1, non-snow-covered pixels=0 (same shape as image bands)
+    im: rasterio object
+        input image used to classify snow
+    im_dt: numpy.datetime64
+        datetime of the image capture
+    im_x: numpy array
+        vector of x coordinates of the input image
+    im_y: numpy array
+        vector of y coordinates of the input image
+    plot_output: bool
+        whether to plot the output RGB and snow classified image with histograms for surface reflectances of each band and the elevations of snow-covered pixels
+        
+    Returns
+    ----------
+    snow_elev: numpy array
+        elevations at each snow-covered pixel
+    '''
     
     # extract one band info
     b = im.read(1)
@@ -225,7 +312,7 @@ def determine_snow_elevs(DEM, snow, im, im_dt, im_x, im_y, plot_output):
     nir = im.read(4)
     
     # interpolate elevation from DEM at image points
-    f = interp2d(DEM_x, DEM_y, DEM_elev)
+    f = interp2d(DEM_x, DEM_y, DEM)
     im_elev = f(im_x, im_y)
     
     # minimum elevation of the image where data exist
@@ -237,39 +324,10 @@ def determine_snow_elevs(DEM, snow, im, im_dt, im_x, im_y, plot_output):
     
     # plot snow elevations histogram
     if plot_output:
-        plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir)
-    
-    return snow_elev
-    
-# -----function to convert Pandas gdf to ee.FeatureCollection
-# from: https://bikeshbade.com.np/tutorials/Detail/?title=Geo-pandas%20data%20frame%20to%20GEE%20feature%20collection%20using%20Python&code=13
-#def feature2ee(gdf):
-#    g = [i for i in gdf.geometry]
-#    features=[]
-#    #for Point geo data type
-#    if (gdf.geom_type[0] == 'Point'):
-#        for i in range(len(g)):
-#            g = [i for i in gdf.geometry]
-#            x,y = g[i].coords.xy
-#            cords = np.dstack((x,y)).tolist()
-#            double_list = reduce(lambda x,y: x+y, cords)
-#            single_list = reduce(lambda x,y: x+y, double_list)
-#            g=ee.Geometry.Point(single_list)
-#            feature = ee.Feature(g)
-#            features.append(feature)
-#        ee_object = ee.FeatureCollection(features)
-#        return ee_object
+        fig = plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir)
+        return snow_elev, fig
         
-def sample_dem_at_im_coords(im_x, im_y, DEM):
-
-    # convert image coordinates to ee.FeatureCollection
-    im_x_mesh, im_y_mesh = np.meshgrid(im_x, im_y)
-    coords = zip(im_x_mesh, im_y_mesh)
-    
-    # convert DEM to numpy array
-#    DEM_np = geemap.ee_to_numpy(DEM)
-    
-    # interpolate DEM at image coordinates
+    return snow_elev
     
     
     
