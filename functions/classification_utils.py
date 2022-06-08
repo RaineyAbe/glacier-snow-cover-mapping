@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interp2d
 import ee
 import geemap
+from shapely.geometry import Polygon
 
 def query_GEE_for_DEM(AOI, im_path, im_names):
     '''Query GEE for the ASTER Global DEM, clip to the AOI, and return as a numpy array.
@@ -53,7 +54,10 @@ def query_GEE_for_DEM(AOI, im_path, im_names):
     DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee)
 
     # -----Grab UTM projection from images, reproject DEM and AOI
-    im = rio.open(im_path+im_names[0])
+    if type(im_names)==str:
+        im = rio.open(im_path+im_names)
+    else:
+        im = rio.open(im_path+im_names[0])
     DEM_UTM = ee.Image.reproject(DEM, str(im.crs))
     AOI_UTM = AOI.to_crs(str(im.crs)[5:])
 
@@ -86,7 +90,7 @@ def crop_images_to_AOI(im_path, im_names, AOI):
     im_names: str array
         file names of images to crop (str array)
     AOI: geopandas.geodataframe.GeoDataFrame
-        cropping region - everything outside the AOI will be masked
+        cropping region - everything outside the AOI will be masked. Only the exterior bounds used for cropping (no holes). AOI must be in the same CRS as the images.
     
     Returns
     ----------
@@ -111,9 +115,9 @@ def crop_images_to_AOI(im_path, im_names, AOI):
         if os.path.exists(cropped_im_fn)==True:
             print('cropped image already exists in directory...skipping.')
         else:
-            # mask image pixels outside the AOI
-            AOI_bb = [AOI.bounds]
-            out_image, out_transform = mask(im, list(AOI.geometry), crop=True)
+            # mask image pixels outside the AOI exterior
+#            AOI_bb = [AOI.bounds]
+            out_image, out_transform = mask(im, AOI.buffer(100), crop=True)
             out_meta = im.meta.copy()
             out_meta.update({"driver": "GTiff",
                          "height": out_image.shape[1],
@@ -205,7 +209,7 @@ def classify_image(im, im_name, clf, feature_cols, out_path):
     
         print('classified snow image already exists in directory, loading...')
         s = rio.open(out_path+snow_fn)
-        snow = s.read(1)
+        snow = s.read(1).astype(float)
         
     else:
     
@@ -215,7 +219,7 @@ def classify_image(im, im_name, clf, feature_cols, out_path):
         r = im.read(3).astype(float)
         nir = im.read(4).astype(float)
         # check if bands must be divided by scalar
-        if (np.nanmean(b) > 1000):
+        if (np.nanmax(b) > 1000):
             im_scalar = 10000
             b = b / im_scalar
             g = g / im_scalar
@@ -248,12 +252,15 @@ def classify_image(im, im_name, clf, feature_cols, out_path):
         snow[:] = np.nan
         snow[I_real] = snow_array
         
+        # replace nan values with -9999 in order to save file with datatype int16
+        snow[np.isnan(snow)] = -9999
+        
         # save to file
         with rio.open(out_path+snow_fn,'w',
                       driver='GTiff',
                       height=im.shape[0],
                       width=im.shape[1],
-                      dtype=snow.dtype,
+                      dtype='int16',
                       count=1,
                       crs=im.crs,
                       transform=im.transform) as dst:
@@ -305,12 +312,24 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, snow, im, im_dt, im_x, im_y, plot_ou
         elevations at each snow-covered pixel
     '''
     
-    # extract one band info
-    b = im.read(1)
-    g = im.read(2)
-    r = im.read(3)
-    nir = im.read(4)
-    
+    # extract bands info
+    b = im.read(1).astype(float)
+    g = im.read(2).astype(float)
+    r = im.read(3).astype(float)
+    nir = im.read(4).astype(float)
+    # check if bands must be divided by scalar
+    if (np.nanmax(b) > 1000):
+        im_scalar = 10000
+        b = b / im_scalar
+        g = g / im_scalar
+        r = r / im_scalar
+        nir = nir / im_scalar
+    # replace no data values with NaN
+    b[b==0] = np.nan
+    g[g==0] = np.nan
+    r[r==0] = np.nan
+    nir[nir==0] = np.nan
+
     # interpolate elevation from DEM at image points
     f = interp2d(DEM_x, DEM_y, DEM)
     im_elev = f(im_x, im_y)
@@ -318,6 +337,7 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, snow, im, im_dt, im_x, im_y, plot_ou
     # minimum elevation of the image where data exist
     im_elev_real = np.where((b>0) & (~np.isnan(b)), im_elev, np.nan)
     im_elev_min = np.nanmin(im_elev_real)
+    im_elev_max = np.nanmax(im_elev_real)
     
     # extract elevations where snow is present
     snow_elev = im_elev[snow==1]
@@ -325,9 +345,9 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, snow, im, im_dt, im_x, im_y, plot_ou
     # plot snow elevations histogram
     if plot_output:
         fig = plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir)
-        return snow_elev, fig
+        return im_elev_min, im_elev_max, snow_elev, fig
         
-    return snow_elev
+    return im_elev_min, im_elev_max, snow_elev
     
     
     

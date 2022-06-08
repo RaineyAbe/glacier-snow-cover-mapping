@@ -469,8 +469,8 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
     g = im.read(2).astype(float)
     r = im.read(3).astype(float)
     nir = im.read(4).astype(float)
+    im_scalar = 10000 # scalar multiplier for image reflectance values
     if (np.nanmean(b[b!=0]) > 1e3):
-        im_scalar = 10000 # scalar multiplier for image reflectance values
         b = b / im_scalar
         g = g / im_scalar
         r = r / im_scalar
@@ -563,7 +563,7 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
 #     print('    nir:',f_nir_adj(bright_pt[0], bright_pt[1]))
                         
     # -----Plot results
-    if (plot_results==True):
+    if plot_results:
         fig, ((ax1, ax2),(ax3,ax4)) = plt.subplots(2,2, figsize=(16,12), gridspec_kw={'height_ratios': [3, 1]})
         plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
         # original image
@@ -613,11 +613,17 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
                      'width':b_adj.shape[1],
                      'height':b_adj.shape[0],
                      'count':4,
-                     'dtype':'float64',
+                     'dtype':'uint16',
                      'crs':im.crs,
                      'transform':im.transform})
     # write to file
     with rio.open(out_path+im_adj_name, mode='w',**out_meta) as dst:
+        # multiply bands by im_scalar and convert datatype to uint64 to decrease file size
+        b_adj = (b_adj * im_scalar)
+        g_adj = (g_adj * im_scalar)
+        r_adj = (r_adj * im_scalar)
+        nir_adj = (nir_adj * im_scalar)
+        # write bands
         dst.write_band(1,b_adj)
         dst.write_band(2,g_adj)
         dst.write_band(3,r_adj)
