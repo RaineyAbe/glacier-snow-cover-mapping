@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp2d
+from scipy import stats
 import ee
 import geemap
 from shapely.geometry import Polygon
@@ -130,7 +131,12 @@ def crop_images_to_AOI(im_path, im_names, AOI):
     return cropped_im_path
 
 def plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir):
-
+    # grab 10th percentile snow elevation
+    iqr = stats.iqr(snow_elev, rng=(10, 90))
+    med = np.median(snow_elev)
+    P10 = med - iqr/2
+    
+    # plot
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10,10), gridspec_kw={'height_ratios': [3, 1]})
     plt.rcParams.update({'font.size': 14, 'font.sans-serif': 'Arial'})
     # RGB image
@@ -158,7 +164,10 @@ def plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir
     ax4.hist(snow_elev.flatten(), bins=100)
     ax4.set_xlabel('Elevation [m]')
     ax4.grid()
-#        fig.colorbar(snow_plot, ax=ax2, shrink=0.5)
+    ymin, ymax = ax4.get_ylim()[0], ax4.get_ylim()[1]
+    ax4.plot((P10, P10), (ymin, ymax), '--', color='black', label='P$_{10}$')
+    ax4.set_ylim(ymin, ymax)
+    ax4.legend(loc='upper left')
     fig.tight_layout()
     fig.suptitle(im_dt)
     plt.show()
