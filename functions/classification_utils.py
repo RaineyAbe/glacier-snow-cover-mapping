@@ -15,8 +15,9 @@ from scipy import stats
 import ee
 import geemap
 from shapely.geometry import Polygon
+import matplotlib
 
-def query_GEE_for_DEM(AOI, im_path, im_names):
+def query_GEE_for_DEM(AOI, im_path, im_fns):
     '''Query GEE for the ASTER Global DEM, clip to the AOI, and return as a numpy array.
     
     Parameters
@@ -25,7 +26,7 @@ def query_GEE_for_DEM(AOI, im_path, im_names):
         area of interest used for clipping the DEM
     im_path: string
         full path to the directory holding the images to be classified
-    im_names: list of strings
+    im_fns: list of strings
         file names of images to be classified, located in im_path. Used to extract the desired coordinate reference system of the DEM
     
     Returns
@@ -51,14 +52,15 @@ def query_GEE_for_DEM(AOI, im_path, im_names):
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
                             ]})
 
-    # -----Query GEE for ASTER Global DEM, clip to AOI
+    # -----Query GEE for DEM, clip to AOI
+    # Use ArcticDEM if within coverage area. Otherwise, use ASTER GDEM.
     DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee)
 
     # -----Grab UTM projection from images, reproject DEM and AOI
-    if type(im_names)==str:
-        im = rio.open(im_path+im_names)
+    if type(im_fns)==str:
+        im = rio.open(im_path + im_fns)
     else:
-        im = rio.open(im_path+im_names[0])
+        im = rio.open(im_path + im_fns[0])
     DEM_UTM = ee.Image.reproject(DEM, str(im.crs))
     AOI_UTM = AOI.to_crs(str(im.crs)[5:])
 
@@ -80,7 +82,7 @@ def query_GEE_for_DEM(AOI, im_path, im_names):
     
     return DEM_np, DEM_x, DEM_y, AOI_UTM
     
-def crop_images_to_AOI(im_path, im_names, AOI):
+def crop_images_to_AOI(im_path, im_fns, AOI):
     '''
     Crop images to AOI.
     
@@ -88,8 +90,8 @@ def crop_images_to_AOI(im_path, im_names, AOI):
     ----------
     im_path: str
         path in directory to images
-    im_names: str array
-        file names of images to crop (str array)
+    im_fns: str array
+        file names of images to crop
     AOI: geopandas.geodataframe.GeoDataFrame
         cropping region - everything outside the AOI will be masked. Only the exterior bounds used for cropping (no holes). AOI must be in the same CRS as the images.
     
@@ -100,19 +102,19 @@ def crop_images_to_AOI(im_path, im_names, AOI):
     '''
     
     # make folder for cropped images if it does not exist
-    cropped_im_path = im_path+'../cropped/'
+    cropped_im_path = im_path + '../cropped/'
     if os.path.isdir(cropped_im_path)==0:
         os.mkdir(cropped_im_path)
         print(cropped_im_path+' directory made')
     
     # loop through images
-    for im_name in im_names:
+    for im_fn in im_fns:
 
         # open image
-        im = rio.open(im_path+im_name)
+        im = rio.open(im_path + im_fn)
 
         # check if file exists in directory already
-        cropped_im_fn = cropped_im_path + im_name[0:15] + '_crop.tif'
+        cropped_im_fn = cropped_im_path + im_fn[0:15] + '_crop.tif'
         if os.path.exists(cropped_im_fn)==True:
             print('cropped image already exists in directory...skipping.')
         else:
@@ -126,17 +128,18 @@ def crop_images_to_AOI(im_path, im_names, AOI):
                          "transform": out_transform})
             with rio.open(cropped_im_fn, "w", **out_meta) as dest:
                 dest.write(out_image)
-            print(cropped_im_fn+' saved')
+            print(cropped_im_fn + ' saved')
             
     return cropped_im_path
 
-def plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir):
-    # grab 10th percentile snow elevation
+def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir):
+
+    # -----Grab 10th percentile snow elevation
     iqr = stats.iqr(snow_elev, rng=(10, 90))
     med = np.median(snow_elev)
     P10 = med - iqr/2
     
-    # plot
+    # -----Plot
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10,10), gridspec_kw={'height_ratios': [3, 1]})
     plt.rcParams.update({'font.size': 14, 'font.sans-serif': 'Arial'})
     # RGB image
@@ -144,12 +147,41 @@ def plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir
                 extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
     ax1.set_xlabel('Easting [km]')
     ax1.set_ylabel('Northing [km]')
+    # define colors for plotting
+    color_snow = '#4eb3d3'
+    color_ice = '#084081'
+    color_rock = '#fdbb84'
+    color_water = '#bdbdbd'
+    # define x and y limits
+    xmin, xmax = np.min(im_x)/1000, np.max(im_x)/1000
+    ymin, ymax = np.min(im_y)/1000, np.max(im_y)/1000
     # snow
-    ax2.imshow(np.where(snow==1, 1, np.nan), cmap='Blues', clim=(0,1.5),
-                extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
-    ax2.imshow(np.where(snow==0, 0, np.nan), cmap='Oranges', clim=(-1,2),
-    extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
+    if any(im_classified.flatten()==1):
+        ax2.imshow(np.where(im_classified == 1, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_snow, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax2.scatter(0, 0, color=color_snow, s=50, label='snow') # plot dummy point for legend
+    if any(im_classified.flatten()==2):
+        ax2.imshow(np.where(im_classified == 2, 4, np.nan), cmap=matplotlib.colors.ListedColormap([color_snow, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+    # ice
+    if any(im_classified.flatten()==3):
+        ax2.imshow(np.where(im_classified == 3, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_ice, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax2.scatter(0, 0, color=color_ice, s=50, label='ice') # plot dummy point for legend
+    # rock/debris
+    if any(im_classified.flatten()==4):
+        ax2.imshow(np.where(im_classified == 4, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_rock, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax2.scatter(0, 0, color=color_rock, s=50, label='rock') # plot dummy point for legend
+    # water
+    if any(im_classified.flatten()==5):
+        ax2.imshow(np.where(im_classified == 5, 10, np.nan), cmap=matplotlib.colors.ListedColormap([color_water, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax2.scatter(0, 0, color=color_water, s=50, label='water') # plot dummy point for legend
+    ax2.legend(loc='lower left')
     ax2.set_xlabel('Easting [km]')
+    ax2.set_xlim(xmin, xmax)
+    ax2.set_ylim(ymin, ymax)
     # image bands histogram
     h_b = ax3.hist(b[b!=0].flatten(), color='blue', histtype='step', linewidth=2, bins=100, label='blue')
     h_g = ax3.hist(g[g!=0].flatten(), color='green', histtype='step', linewidth=2, bins=100, label='green')
@@ -161,7 +193,7 @@ def plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir
     ax3.set_ylim(0,np.max([h_nir[0][1:], h_g[0][1:], h_r[0][1:], h_b[0][1:]])+5000)
     ax3.grid()
     # snow elevations histogram
-    ax4.hist(snow_elev.flatten(), bins=100)
+    ax4.hist(snow_elev.flatten(), bins=100, color=color_snow)
     ax4.set_xlabel('Elevation [m]')
     ax4.grid()
     ymin, ymax = ax4.get_ylim()[0], ax4.get_ylim()[1]
@@ -174,7 +206,7 @@ def plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir
     
     return fig
 
-def classify_image(im, im_name, clf, feature_cols, out_path):
+def classify_image(im, im_fn, clf, feature_cols, out_path):
     '''
     Function to classify input image using a pre-trained classifier
     
@@ -182,7 +214,7 @@ def classify_image(im, im_name, clf, feature_cols, out_path):
     ----------
     im: rasterio object
         input image
-    im_name: str
+    im_fn: str
         file name of input image
     clf: sklearn.classifier
         previously trained SciKit Learn Classifier
@@ -213,12 +245,12 @@ def classify_image(im, im_name, clf, feature_cols, out_path):
         print('made directory for classified snow images:' + out_path)
             
     # -----Check if classified snow image exists in directory already
-    snow_fn = im_name[0:-4]+'_snow.tif'
-    if os.path.exists(out_path+snow_fn):
+    im_classified_fn = im_fn[0:-4]+'_classified.tif'
+    if os.path.exists(out_path+im_classified_fn):
     
         print('classified snow image already exists in directory, loading...')
-        s = rio.open(out_path+snow_fn)
-        snow = s.read(1).astype(float)
+        s = rio.open(out_path + im_classified_fn)
+        im_classified = s.read(1).astype(float)
         
     else:
     
@@ -253,19 +285,19 @@ def classify_image(im, im_name, clf, feature_cols, out_path):
         df['NIR'] = nir[I_real].flatten()
         df['NDSI'] = ndsi[I_real].flatten()
 
-        # classify snow
-        snow_array = clf.predict(df[feature_cols])
+        # classify image
+        array_classified = clf.predict(df[feature_cols])
         
         # reshape from flat array to original shape
-        snow = np.zeros((np.shape(b)[0], np.shape(b)[1]))
-        snow[:] = np.nan
-        snow[I_real] = snow_array
+        im_classified = np.zeros((np.shape(b)[0], np.shape(b)[1]))
+        im_classified[:] = np.nan
+        im_classified[I_real] = array_classified
         
         # replace nan values with -9999 in order to save file with datatype int16
-        snow[np.isnan(snow)] = -9999
+        im_classified[np.isnan(im_classified)] = -9999
         
         # save to file
-        with rio.open(out_path+snow_fn,'w',
+        with rio.open(out_path + im_classified_fn,'w',
                       driver='GTiff',
                       height=im.shape[0],
                       width=im.shape[1],
@@ -273,26 +305,29 @@ def classify_image(im, im_name, clf, feature_cols, out_path):
                       count=1,
                       crs=im.crs,
                       transform=im.transform) as dst:
-            dst.write(snow, 1)
-        print('classified snow image saved to file:',snow_fn)
+            dst.write(im_classified, 1)
+        print('classified image saved to file:',im_classified_fn)
                 
-    return im_x, im_y, snow
+    return im_x, im_y, im_classified
     
-def calculate_SCA(im, snow):
+def calculate_SCA(im, im_classified):
     '''Function to calculated total snow-covered area (SCA) from using an input image and a snow binary mask of the same resolution and grid.
     INPUTS:
-        - im: input image ()
-        - snow: binary snow mask created from image 
+        im: rasterio object
+            input image
+        im_classified: numpy array
+            classified image array with the same shape as the input image bands. Classes: snow = 1, shadowed snow = 2, ice = 3, rock/debris = 4.
     OUTPUTS:
-        - SCA: '''
+        SCA: float
+            snow-covered area in classified image [m^2]'''
 
     pA = im.res[0]*im.res[1] # pixel area [m^2]
-    snow_count = np.count_nonzero(snow) # number of snow pixels
+    snow_count = np.count_nonzero(im_classified <= 2) # number of snow and shadowed snow pixels
     SCA = pA * snow_count # area of snow [m^2]
 
     return SCA
     
-def determine_snow_elevs(DEM, DEM_x, DEM_y, snow, im, im_dt, im_x, im_y, plot_output):
+def determine_snow_elevs(DEM, DEM_x, DEM_y, im, im_classified, im_dt, im_x, im_y, plot_output):
     '''Determine elevations of snow-covered pixels in the classified image.
     Parameters
     ----------
@@ -302,10 +337,10 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, snow, im, im_dt, im_x, im_y, plot_ou
         vector of x coordinates of the DEM
     DEM_y: numpy array
         vector of y coordinates of the DEM
-    snow: numpy array
-        binary array where snow-covered pixels = 1, non-snow-covered pixels=0 (same shape as image bands)
     im: rasterio object
         input image used to classify snow
+    im_classified: numpy array
+        classified image array with the same shape as the input image bands. Classes: snow = 1, shadowed snow = 2, ice = 3, rock/debris = 4.
     im_dt: numpy.datetime64
         datetime of the image capture
     im_x: numpy array
@@ -349,11 +384,11 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, snow, im, im_dt, im_x, im_y, plot_ou
     im_elev_max = np.nanmax(im_elev_real)
     
     # extract elevations where snow is present
-    snow_elev = im_elev[snow==1]
+    snow_elev = im_elev[im_classified<=2]
     
     # plot snow elevations histogram
     if plot_output:
-        fig = plot_im_snow_histograms(im, im_dt, im_x, im_y, snow, snow_elev, b, g, r, nir)
+        fig = plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir)
         return im_elev_min, im_elev_max, snow_elev, fig
         
     return im_elev_min, im_elev_max, snow_elev

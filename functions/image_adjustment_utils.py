@@ -438,197 +438,203 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
     
     print('RADIOMETRIC ADJUSTMENT')
     
-    # -----Load instrument name and cloud cover percentage from metadata
-    # read instrument name from the file
-#    inst = meta_content[53].split('>')[1]
-#    if "PS2" in inst:
-#        inst = inst[0:3]
-#    elif "PSB" in inst:
-#        inst = inst[0:6]
-#    # read cloud cover percentage from the file
-#    cc = meta_content[148].split('>')[1]
-#    cc = cc.split('<')[0]
-#    cc = float(cc)
-#    # exit if cloud cover is above 20%
-#    if cc > max_cloud_cover:
-#        print('cloud cover exceeds max_cloud_cover... skipping')
-#        im_adj_name = 'N/A'
-#        return im_adj_name
-        
-    # -----Define desired SR values at the bright area and darkest point for each band
-    # bright area
-    bright_b_adj = 0.94
-    bright_g_adj = 0.95
-    bright_r_adj = 0.94
-    bright_nir_adj = 0.78
-    # dark point
-    dark_adj = 0.0
-    
-    # -----Define bands (blue, green, red, near infrared)
-    b = im.read(1).astype(float)
-    g = im.read(2).astype(float)
-    r = im.read(3).astype(float)
-    nir = im.read(4).astype(float)
-    im_scalar = 10000 # scalar multiplier for image reflectance values
-    if (np.nanmean(b[b!=0]) > 1e3):
-        b = b / im_scalar
-        g = g / im_scalar
-        r = r / im_scalar
-        nir = nir / im_scalar
-        
-    # -----Replace no-data values with NaN
-    b[b==0] = np.nan
-    g[g==0] = np.nan
-    r[r==0] = np.nan
-    nir[nir==0] = np.nan
-        
-    # -----Return if image bands are likely clipped
-    if skip_clipped==True:
-        if (np.nanmax(b) < 0.8) or (np.nanmax(g) < 0.8) or (np.nanmax(r) < 0.8):
-            print('image bands appear clipped... skipping.')
-            im_adj_name = 'N/A'
-            return im_adj_name
-        
-    # -----Define coordinates grid
-    im_x = np.linspace(im.bounds.left, im.bounds.right, num=np.shape(b)[1])
-    im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(b)[0])
-    im_x_mesh, im_y_mesh = np.meshgrid(im_x, im_y)
-
-    # -----Return if image does not contain SCA
-    if ((np.min(SCA.exterior.xy[0]) > np.min(im_x))
-        & (np.max(SCA.exterior.xy[0]) < np.max(im_x))
-        & (np.min(SCA.exterior.xy[1]) > np.min(im_y))
-        & (np.max(SCA.exterior.xy[1]) < np.max(im_y)))==False:
-        print('image does not contain SCA... skipping.')
-        im_adj_name = 'N/A'
-        return im_adj_name
-        
-    # -----Filter image points outside the SCA
-    b_SCA = b[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                      (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-    g_SCA = g[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                      (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-    r_SCA = r[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                      (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-    nir_SCA = nir[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                           (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-                              
-    # -----Return if no real values exist within the SCA
-    if (np.nanmean(b_SCA==0)) or (np.isnan(np.nanmean(b_SCA))):
-        print('image does not contain any real values within the SCA... skipping.')
-        im_adj_name = 'N/A'
-        return im_adj_name
-        
-    # -----Adjust SR using bright and dark points
-    # band_adjusted = band*A - B
-    # A = (bright_adjusted - dark_adjusted) / (bright - dark)
-    # B = (dark*bright_adjusted - bright*dark_adjusted) / (bright - dark)
-    # blue band
-    bright_b = np.nanmedian(b_SCA) # SR at bright point
-    dark_b = np.nanmin(b) # SR at darkest point
-    A = (bright_b_adj - dark_adj) / (bright_b - dark_b)
-    B = (dark_b*bright_b_adj - bright_b*dark_adj) / (bright_b - dark_b)
-    b_adj = (b * A) - B
-    b_adj = np.where(b==0, np.nan, b_adj) # replace no data values with nan
-    # green band
-    bright_g = np.nanmedian(g_SCA) # SR at bright point
-    dark_g = np.nanmin(g) # SR at darkest point
-    A = (bright_g_adj - dark_adj) / (bright_g - dark_g)
-    B = (dark_g*bright_g_adj - bright_g*dark_adj) / (bright_g - dark_g)
-    g_adj = (g * A) - B
-    g_adj = np.where(g==0, np.nan, g_adj) # replace no data values with nan
-    # red band
-    bright_r = np.nanmedian(r_SCA) # SR at bright point
-    dark_r = np.nanmin(r) # SR at darkest point
-    A = (bright_r_adj - dark_adj) / (bright_r - dark_r)
-    B = (dark_r*bright_r_adj - bright_r*dark_adj) / (bright_r - dark_r)
-    r_adj = (r * A) - B
-    r_adj = np.where(r==0, np.nan, r_adj) # replace no data values with nan
-    # nir band
-    bright_nir = np.nanmedian(nir_SCA) # SR at bright point
-    dark_nir = np.nanmin(nir) # SR at darkest point
-    A = (bright_nir_adj - dark_adj) / (bright_nir - dark_nir)
-    B = (dark_nir*bright_nir_adj - bright_nir*dark_adj) / (bright_nir - dark_nir)
-    nir_adj = (nir * A) - B
-    nir_adj = np.where(nir==0, np.nan, nir_adj) # replace no data values with nan
-            
-    # -----Print new values at the bright and dark points to check for success
-#     f_b_adj = interp2d(x, y, b_adj)
-#     f_g_adj = interp2d(x, y, g_adj)
-#     f_r_adj = interp2d(x, y, r_adj)
-#     f_nir_adj = interp2d(x, y, nir_adj)
-#     print('    blue:',f_b_adj(bright_pt[0], bright_pt[1]))
-#     print('    green:',f_g_adj(bright_pt[0], bright_pt[1]))
-#     print('    red:',f_r_adj(bright_pt[0], bright_pt[1]))
-#     print('    nir:',f_nir_adj(bright_pt[0], bright_pt[1]))
-                        
-    # -----Plot results
-    if plot_results:
-        fig, ((ax1, ax2),(ax3,ax4)) = plt.subplots(2,2, figsize=(16,12), gridspec_kw={'height_ratios': [3, 1]})
-        plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
-        # original image
-        im_original = ax1.imshow(np.dstack([r, g, b]),
-                    extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
-        ax1.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]],
-                 color='black', linewidth=2, label='SCA')
-        ax1.legend()
-        ax1.set_xlabel('Easting [km]')
-        ax1.set_ylabel('Northing [km]')
-        ax1.set_title('Original image')
-        # adjusted image
-        ax2.imshow(np.dstack([r_adj, g_adj, b_adj]),
-            extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
-        ax2.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]],
-                 color='black', linewidth=2, label='SCA')
-        ax2.set_xlabel('Easting [km]')
-        ax2.set_title('Adjusted image')
-        # band histograms
-        ax3.hist(nir[nir>0].flatten(), bins=100, histtype='step', linewidth=1, color='purple', label='NIR')
-        ax3.hist(b[b>0].flatten(), bins=100, histtype='step', linewidth=1, color='blue', label='Blue')
-        ax3.hist(g[g>0].flatten(), bins=100, histtype='step', linewidth=1, color='green', label='Green')
-        ax3.hist(r[r>0].flatten(), bins=100, histtype='step', linewidth=1, color='red', label='Red')
-        ax3.set_xlabel('Surface reflectance')
-        ax3.set_ylabel('Pixel counts')
-        ax3.grid()
-        ax3.legend()
-        ax4.hist(nir_adj[nir_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='purple', label='NIR')
-        ax4.hist(b_adj[b_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='blue', label='Blue')
-        ax4.hist(g_adj[g_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='green', label='Green')
-        ax4.hist(r_adj[r_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='red', label='Red')
-        ax4.set_xlabel('Surface reflectance')
-        ax4.grid()
-        fig.tight_layout()
-        plt.show()
-
-    # -----Save adjusted raster to file
+    # -----Check if out_path and adjusted image file exist
     # create output directory (if it does not already exist in file)
     if os.path.exists(out_path)==False:
         os.mkdir(out_path)
         print('created output directory:',out_path)
-    # file name
+    # adjusted image file name
     im_adj_name = im_name[0:-4]+'_adj.tif'
-    # metadata
-    out_meta = im.meta.copy()
-    out_meta.update({'driver':'GTiff',
-                     'width':b_adj.shape[1],
-                     'height':b_adj.shape[0],
-                     'count':4,
-                     'dtype':'uint16',
-                     'crs':im.crs,
-                     'transform':im.transform})
-    # write to file
-    with rio.open(out_path+im_adj_name, mode='w',**out_meta) as dst:
-        # multiply bands by im_scalar and convert datatype to uint64 to decrease file size
-        b_adj = (b_adj * im_scalar)
-        g_adj = (g_adj * im_scalar)
-        r_adj = (r_adj * im_scalar)
-        nir_adj = (nir_adj * im_scalar)
-        # write bands
-        dst.write_band(1,b_adj)
-        dst.write_band(2,g_adj)
-        dst.write_band(3,r_adj)
-        dst.write_band(4,nir_adj)
-    print('adjusted image saved to file: '+im_adj_name)
+    if os.path.exists(out_path + im_adj_name)==True:
+        print('adjusted image already exists in directory...skipping.')
+
+    else:
+    
+        # -----Load instrument name and cloud cover percentage from metadata
+        # read instrument name from the file
+    #    inst = meta_content[53].split('>')[1]
+    #    if "PS2" in inst:
+    #        inst = inst[0:3]
+    #    elif "PSB" in inst:
+    #        inst = inst[0:6]
+    #    # read cloud cover percentage from the file
+    #    cc = meta_content[148].split('>')[1]
+    #    cc = cc.split('<')[0]
+    #    cc = float(cc)
+    #    # exit if cloud cover is above 20%
+    #    if cc > max_cloud_cover:
+    #        print('cloud cover exceeds max_cloud_cover... skipping')
+    #        im_adj_name = 'N/A'
+    #        return im_adj_name
+            
+        # -----Define desired SR values at the bright area and darkest point for each band
+        # bright area
+        bright_b_adj = 0.94
+        bright_g_adj = 0.95
+        bright_r_adj = 0.94
+        bright_nir_adj = 0.78
+        # dark point
+        dark_adj = 0.0
+        
+        # -----Define bands (blue, green, red, near infrared)
+        b = im.read(1).astype(float)
+        g = im.read(2).astype(float)
+        r = im.read(3).astype(float)
+        nir = im.read(4).astype(float)
+        im_scalar = 10000 # scalar multiplier for image reflectance values
+        if (np.nanmax(b) > 1e3):
+            b = b / im_scalar
+            g = g / im_scalar
+            r = r / im_scalar
+            nir = nir / im_scalar
+            
+        # -----Replace no-data values with NaN
+        b[b==0] = np.nan
+        g[g==0] = np.nan
+        r[r==0] = np.nan
+        nir[nir==0] = np.nan
+            
+        # -----Return if image bands are likely clipped
+        if skip_clipped==True:
+            if (np.nanmax(b) < 0.8) or (np.nanmax(g) < 0.8) or (np.nanmax(r) < 0.8):
+                print('image bands appear clipped... skipping.')
+                im_adj_name = 'N/A'
+                return im_adj_name
+            
+        # -----Define coordinates grid
+        im_x = np.linspace(im.bounds.left, im.bounds.right, num=np.shape(b)[1])
+        im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(b)[0])
+        im_x_mesh, im_y_mesh = np.meshgrid(im_x, im_y)
+
+        # -----Return if image does not contain SCA
+        if ((np.min(SCA.exterior.xy[0]) > np.min(im_x))
+            & (np.max(SCA.exterior.xy[0]) < np.max(im_x))
+            & (np.min(SCA.exterior.xy[1]) > np.min(im_y))
+            & (np.max(SCA.exterior.xy[1]) < np.max(im_y)))==False:
+            print('image does not contain SCA... skipping.')
+            im_adj_name = 'N/A'
+            return im_adj_name
+            
+        # -----Filter image points outside the SCA
+        b_SCA = b[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
+                          (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
+        g_SCA = g[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
+                          (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
+        r_SCA = r[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
+                          (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
+        nir_SCA = nir[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
+                               (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
+                                  
+        # -----Return if no real values exist within the SCA
+        if (np.nanmean(b_SCA==0)) or (np.isnan(np.nanmean(b_SCA))):
+            print('image does not contain any real values within the SCA... skipping.')
+            im_adj_name = 'N/A'
+            return im_adj_name
+            
+        # -----Adjust SR using bright and dark points
+        # band_adjusted = band*A - B
+        # A = (bright_adjusted - dark_adjusted) / (bright - dark)
+        # B = (dark*bright_adjusted - bright*dark_adjusted) / (bright - dark)
+        # blue band
+        bright_b = np.nanmedian(b_SCA) # SR at bright point
+        dark_b = np.nanmin(b) # SR at darkest point
+        A = (bright_b_adj - dark_adj) / (bright_b - dark_b)
+        B = (dark_b*bright_b_adj - bright_b*dark_adj) / (bright_b - dark_b)
+        b_adj = (b * A) - B
+        b_adj = np.where(b==0, np.nan, b_adj) # replace no data values with nan
+        # green band
+        bright_g = np.nanmedian(g_SCA) # SR at bright point
+        dark_g = np.nanmin(g) # SR at darkest point
+        A = (bright_g_adj - dark_adj) / (bright_g - dark_g)
+        B = (dark_g*bright_g_adj - bright_g*dark_adj) / (bright_g - dark_g)
+        g_adj = (g * A) - B
+        g_adj = np.where(g==0, np.nan, g_adj) # replace no data values with nan
+        # red band
+        bright_r = np.nanmedian(r_SCA) # SR at bright point
+        dark_r = np.nanmin(r) # SR at darkest point
+        A = (bright_r_adj - dark_adj) / (bright_r - dark_r)
+        B = (dark_r*bright_r_adj - bright_r*dark_adj) / (bright_r - dark_r)
+        r_adj = (r * A) - B
+        r_adj = np.where(r==0, np.nan, r_adj) # replace no data values with nan
+        # nir band
+        bright_nir = np.nanmedian(nir_SCA) # SR at bright point
+        dark_nir = np.nanmin(nir) # SR at darkest point
+        A = (bright_nir_adj - dark_adj) / (bright_nir - dark_nir)
+        B = (dark_nir*bright_nir_adj - bright_nir*dark_adj) / (bright_nir - dark_nir)
+        nir_adj = (nir * A) - B
+        nir_adj = np.where(nir==0, np.nan, nir_adj) # replace no data values with nan
+                
+        # -----Print new values at the bright and dark points to check for success
+    #     f_b_adj = interp2d(x, y, b_adj)
+    #     f_g_adj = interp2d(x, y, g_adj)
+    #     f_r_adj = interp2d(x, y, r_adj)
+    #     f_nir_adj = interp2d(x, y, nir_adj)
+    #     print('    blue:',f_b_adj(bright_pt[0], bright_pt[1]))
+    #     print('    green:',f_g_adj(bright_pt[0], bright_pt[1]))
+    #     print('    red:',f_r_adj(bright_pt[0], bright_pt[1]))
+    #     print('    nir:',f_nir_adj(bright_pt[0], bright_pt[1]))
+                            
+        # -----Plot results
+        if plot_results:
+            fig, ((ax1, ax2),(ax3,ax4)) = plt.subplots(2,2, figsize=(16,12), gridspec_kw={'height_ratios': [3, 1]})
+            plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
+            # original image
+            im_original = ax1.imshow(np.dstack([r, g, b]),
+                        extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
+            ax1.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]],
+                     color='black', linewidth=2, label='SCA')
+            ax1.legend()
+            ax1.set_xlabel('Easting [km]')
+            ax1.set_ylabel('Northing [km]')
+            ax1.set_title('Original image')
+            # adjusted image
+            ax2.imshow(np.dstack([r_adj, g_adj, b_adj]),
+                extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
+            ax2.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]],
+                     color='black', linewidth=2, label='SCA')
+            ax2.set_xlabel('Easting [km]')
+            ax2.set_title('Adjusted image')
+            # band histograms
+            ax3.hist(nir[nir>0].flatten(), bins=100, histtype='step', linewidth=1, color='purple', label='NIR')
+            ax3.hist(b[b>0].flatten(), bins=100, histtype='step', linewidth=1, color='blue', label='Blue')
+            ax3.hist(g[g>0].flatten(), bins=100, histtype='step', linewidth=1, color='green', label='Green')
+            ax3.hist(r[r>0].flatten(), bins=100, histtype='step', linewidth=1, color='red', label='Red')
+            ax3.set_xlabel('Surface reflectance')
+            ax3.set_ylabel('Pixel counts')
+            ax3.grid()
+            ax3.legend()
+            ax4.hist(nir_adj[nir_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='purple', label='NIR')
+            ax4.hist(b_adj[b_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='blue', label='Blue')
+            ax4.hist(g_adj[g_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='green', label='Green')
+            ax4.hist(r_adj[r_adj>0].flatten(), bins=100, histtype='step', linewidth=1, color='red', label='Red')
+            ax4.set_xlabel('Surface reflectance')
+            ax4.grid()
+            fig.tight_layout()
+            plt.show()
+
+        # -----Save adjusted raster to file
+        # metadata
+        out_meta = im.meta.copy()
+        out_meta.update({'driver':'GTiff',
+                         'width':b_adj.shape[1],
+                         'height':b_adj.shape[0],
+                         'count':4,
+                         'dtype':'uint16',
+                         'crs':im.crs,
+                         'transform':im.transform})
+        # write to file
+        with rio.open(out_path+im_adj_name, mode='w',**out_meta) as dst:
+            # multiply bands by im_scalar and convert datatype to uint64 to decrease file size
+            b_adj = (b_adj * im_scalar)
+            g_adj = (g_adj * im_scalar)
+            r_adj = (r_adj * im_scalar)
+            nir_adj = (nir_adj * im_scalar)
+            # write bands
+            dst.write_band(1,b_adj)
+            dst.write_band(2,g_adj)
+            dst.write_band(3,r_adj)
+            dst.write_band(4,nir_adj)
+        print('adjusted image saved to file: '+im_adj_name)
 
     return im_adj_name
 
