@@ -199,7 +199,7 @@ def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_ele
     ymin, ymax = ax4.get_ylim()[0], ax4.get_ylim()[1]
     ax4.plot((P10, P10), (ymin, ymax), '--', color='black', label='P$_{10}$')
     ax4.set_ylim(ymin, ymax)
-    ax4.legend(loc='upper left')
+    ax4.legend(loc='lower right')
     fig.tight_layout()
     fig.suptitle(im_dt)
     plt.show()
