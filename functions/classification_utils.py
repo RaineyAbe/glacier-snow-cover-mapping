@@ -44,16 +44,22 @@ def query_GEE_for_DEM(AOI, im_path, im_fns):
     # reproject AOI to WGS 84 for compatibility with DEM
     AOI_WGS = AOI.to_crs(4326)
     # reformat AOI_UTM bounding box as ee.Geometry for clipping DEM
-    AOI_WGS_bb_ee = ee.Geometry({"type": "Polygon","coordinates":
+    AOI_WGS_bb_ee = ee.Geometry.Polygon(
                             [[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
-                            ]})
+                            ])
 
     # -----Query GEE for DEM, clip to AOI
-    # Use ArcticDEM if within coverage area. Otherwise, use ASTER GDEM.
+    # Use ArcticDEM if it fully covers the AOI. Otherwise, use ASTER GDEM.
+#    if ee.Image("UMN/PGC/ArcticDEM/V3/2m_mosaic").geometry().contains(AOI_WGS_bb_ee).getInfo()==True:
+#        DEM = ee.Image("UMN/PGC/ArcticDEM/V3/2m_mosaic").clip(AOI_WGS_bb_ee)
+#        print("DEM = ArcticDEM")
+#    else:
+#        DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee)
+#        print("DEM = ASTER GDEM")
     DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee)
 
     # -----Grab UTM projection from images, reproject DEM and AOI
@@ -75,8 +81,8 @@ def query_GEE_for_DEM(AOI, im_path, im_fns):
     DEM_im = plt.imshow(DEM_np, cmap='Greens_r',
                         extent=(np.min(DEM_x), np.max(DEM_x), np.min(DEM_y), np.max(DEM_y)))
     AOI_UTM.plot(ax=ax, facecolor='none', edgecolor='black', label='AOI')
-    ax.set_xlabel('Easting [m]')
-    ax.set_ylabel('Northing [m]')
+    ax.set_xlabel("Easting [m]")
+    ax.set_ylabel("Northing [m]")
     fig.colorbar(DEM_im, ax=ax, shrink=0.5, label='Elevation [m]')
     plt.show()
     
@@ -102,10 +108,10 @@ def crop_images_to_AOI(im_path, im_fns, AOI):
     '''
     
     # make folder for cropped images if it does not exist
-    cropped_im_path = im_path + '../cropped/'
+    cropped_im_path = im_path + "../cropped/"
     if os.path.isdir(cropped_im_path)==0:
         os.mkdir(cropped_im_path)
-        print(cropped_im_path+' directory made')
+        print(cropped_im_path+" directory made")
     
     # loop through images
     for im_fn in im_fns:
@@ -114,9 +120,9 @@ def crop_images_to_AOI(im_path, im_fns, AOI):
         im = rio.open(im_path + im_fn)
 
         # check if file exists in directory already
-        cropped_im_fn = cropped_im_path + im_fn[0:15] + '_crop.tif'
+        cropped_im_fn = cropped_im_path + im_fn[0:15] + "_crop.tif"
         if os.path.exists(cropped_im_fn)==True:
-            print('cropped image already exists in directory...skipping.')
+            print("cropped image already exists in directory...skipping.")
         else:
             # mask image pixels outside the AOI exterior
 #            AOI_bb = [AOI.bounds]
@@ -128,16 +134,16 @@ def crop_images_to_AOI(im_path, im_fns, AOI):
                          "transform": out_transform})
             with rio.open(cropped_im_fn, "w", **out_meta) as dest:
                 dest.write(out_image)
-            print(cropped_im_fn + ' saved')
+            print(cropped_im_fn + " saved")
             
     return cropped_im_path
 
-def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir):
+def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir, DEM_x, DEM_y, DEM):
 
-    # -----Grab 10th percentile snow elevation
-    iqr = stats.iqr(snow_elev, rng=(10, 90))
+    # -----Grab 2nd percentile snow elevation
+    iqr = stats.iqr(snow_elev, rng=(2, 98))
     med = np.median(snow_elev)
-    P10 = med - iqr/2
+    P = med - iqr/2
     
     # -----Plot
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10,10), gridspec_kw={'height_ratios': [3, 1]})
@@ -145,8 +151,8 @@ def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_ele
     # RGB image
     ax1.imshow(np.dstack([r, g, b]),
                 extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
-    ax1.set_xlabel('Easting [km]')
-    ax1.set_ylabel('Northing [km]')
+    ax1.set_xlabel("Easting [km]")
+    ax1.set_ylabel("Northing [km]")
     # define colors for plotting
     color_snow = '#4eb3d3'
     color_ice = '#084081'
@@ -178,31 +184,39 @@ def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_ele
         ax2.imshow(np.where(im_classified == 5, 10, np.nan), cmap=matplotlib.colors.ListedColormap([color_water, 'white']),
                     extent=(xmin, xmax, ymin, ymax))
         ax2.scatter(0, 0, color=color_water, s=50, label='water') # plot dummy point for legend
+    # snow elevation contour
+    cs = ax2.contour(DEM_x/1000, DEM_y/1000, np.flipud(DEM.squeeze()), [P], colors=['black'])
     ax2.legend(loc='lower left')
-    ax2.set_xlabel('Easting [km]')
+    ax2.set_xlabel("Easting [km]")
     ax2.set_xlim(xmin, xmax)
     ax2.set_ylim(ymin, ymax)
     # image bands histogram
-    h_b = ax3.hist(b[b!=0].flatten(), color='blue', histtype='step', linewidth=2, bins=100, label='blue')
-    h_g = ax3.hist(g[g!=0].flatten(), color='green', histtype='step', linewidth=2, bins=100, label='green')
-    h_r = ax3.hist(r[r!=0].flatten(), color='red', histtype='step', linewidth=2, bins=100, label='red')
-    h_nir = ax3.hist(nir[nir!=0].flatten(), color='brown', histtype='step', linewidth=2, bins=100, label='NIR')
-    ax3.set_xlabel('Surface reflectance')
-    ax3.set_ylabel('Pixel counts')
+    h_b = ax3.hist(b[b!=0].flatten(), color='blue', histtype='step', linewidth=2, bins=100, label="blue")
+    h_g = ax3.hist(g[g!=0].flatten(), color='green', histtype='step', linewidth=2, bins=100, label="green")
+    h_r = ax3.hist(r[r!=0].flatten(), color='red', histtype='step', linewidth=2, bins=100, label="red")
+    h_nir = ax3.hist(nir[nir!=0].flatten(), color='brown', histtype='step', linewidth=2, bins=100, label="NIR")
+    ax3.set_xlabel("Surface reflectance")
+    ax3.set_ylabel("Pixel counts")
     ax3.legend(loc='upper left')
     ax3.set_ylim(0,np.max([h_nir[0][1:], h_g[0][1:], h_r[0][1:], h_b[0][1:]])+5000)
     ax3.grid()
     # snow elevations histogram
     ax4.hist(snow_elev.flatten(), bins=100, color=color_snow)
-    ax4.set_xlabel('Elevation [m]')
+    ax4.set_xlabel("Elevation [m]")
     ax4.grid()
     ymin, ymax = ax4.get_ylim()[0], ax4.get_ylim()[1]
-    ax4.plot((P10, P10), (ymin, ymax), '--', color='black', label='P$_{10}$')
+    ax4.plot((P, P), (ymin, ymax), color='black', label='P$_{2}$')
     ax4.set_ylim(ymin, ymax)
     ax4.legend(loc='lower right')
     fig.tight_layout()
     fig.suptitle(im_dt)
     plt.show()
+    
+    # extract contour vertices
+    p = cs.collections[0].get_paths()[0]
+    v = p.vertices
+    x = v[:,0]
+    y = v[:,1]
     
     return fig
 
@@ -242,13 +256,13 @@ def classify_image(im, im_fn, clf, feature_cols, out_path):
     # -----Make directory for snow images (if it does not already exist in file)
     if os.path.exists(out_path)==False:
         os.mkdir(out_path)
-        print('made directory for classified snow images:' + out_path)
+        print("Made directory for classified snow images:" + out_path)
             
     # -----Check if classified snow image exists in directory already
-    im_classified_fn = im_fn[0:-4]+'_classified.tif'
+    im_classified_fn = im_fn[0:-4] + "_classified.tif"
     if os.path.exists(out_path+im_classified_fn):
     
-        print('classified snow image already exists in directory, loading...')
+        print("Classified snow image already exists in directory, loading...")
         s = rio.open(out_path + im_classified_fn)
         im_classified = s.read(1).astype(float)
         
@@ -271,6 +285,10 @@ def classify_image(im, im_fn, clf, feature_cols, out_path):
         g[g==0] = np.nan
         r[r==0] = np.nan
         nir[nir==0] = np.nan
+        b[b==-9999] = np.nan
+        g[g==-9999] = np.nan
+        r[r==-9999] = np.nan
+        nir[nir==-9999] = np.nan
         # calculate NDSI with red and NIR bands
         ndsi = (r - nir) / (r + nir)
         
@@ -306,7 +324,7 @@ def classify_image(im, im_fn, clf, feature_cols, out_path):
                       crs=im.crs,
                       transform=im.transform) as dst:
             dst.write(im_classified, 1)
-        print('classified image saved to file:',im_classified_fn)
+        print("Classified image saved to file:",im_classified_fn)
                 
     return im_x, im_y, im_classified
     
@@ -373,7 +391,11 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, im, im_classified, im_dt, im_x, im_y
     g[g==0] = np.nan
     r[r==0] = np.nan
     nir[nir==0] = np.nan
-
+    b[b==-9999] = np.nan
+    g[g==-9999] = np.nan
+    r[r==-9999] = np.nan
+    nir[nir==-9999] = np.nan
+    im_classified[im_classified==-9999] = np.nan
     # interpolate elevation from DEM at image points
     f = interp2d(DEM_x, DEM_y, DEM)
     im_elev = f(im_x, im_y)
@@ -388,7 +410,7 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, im, im_classified, im_dt, im_x, im_y
     
     # plot snow elevations histogram
     if plot_output:
-        fig = plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir)
+        fig = plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir, DEM_x, DEM_y, DEM)
         return im_elev_min, im_elev_max, snow_elev, fig
         
     return im_elev_min, im_elev_max, snow_elev
