@@ -70,7 +70,7 @@ def query_GEE_for_DEM(AOI, im_path, im_fns):
     DEM_UTM = ee.Image.reproject(DEM, str(im.crs))
     AOI_UTM = AOI.to_crs(str(im.crs)[5:])
 
-    # -----Convert DEM to numpy array, extract coordinates
+    # -----Convert DEM, aspect, and slope to numpy arrays, extract coordinates
     DEM_np = geemap.ee_to_numpy(DEM, ['elevation'])
     DEM_x = np.linspace(AOI_UTM.geometry.bounds.minx[0], AOI_UTM.geometry.bounds.maxx[0], num=np.shape(DEM_np)[1])
     DEM_y = np.linspace(AOI_UTM.geometry.bounds.miny[0], AOI_UTM.geometry.bounds.maxy[0], num=np.shape(DEM_np)[0])
