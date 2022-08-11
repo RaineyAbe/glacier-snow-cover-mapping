@@ -40,10 +40,11 @@ def query_GEE_for_DEM(AOI, im_path, im_fns):
     AOI_UTM: geopandas.geodataframe.GeoDataFrame
         AOI reprojected to the coordinate reference system of the images
     '''
+    
     # -----Reformat AOI for clipping DEM
     # reproject AOI to WGS 84 for compatibility with DEM
     AOI_WGS = AOI.to_crs(4326)
-    # reformat AOI_UTM bounding box as ee.Geometry for clipping DEM
+    # reformat AOI_WGS bounding box as ee.Geometry for clipping DEM
     AOI_WGS_bb_ee = ee.Geometry.Polygon(
                             [[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
@@ -70,8 +71,9 @@ def query_GEE_for_DEM(AOI, im_path, im_fns):
     DEM_UTM = ee.Image.reproject(DEM, str(im.crs))
     AOI_UTM = AOI.to_crs(str(im.crs)[5:])
 
-    # -----Convert DEM, aspect, and slope to numpy arrays, extract coordinates
-    DEM_np = geemap.ee_to_numpy(DEM, ['elevation'])
+    # -----Convert DEM to numpy array, extract coordinates
+    DEM_np = geemap.ee_to_numpy(DEM, ['elevation'], region=AOI_WGS_bb_ee, default_value=-9999).astype(float)
+    DEM_np[DEM_np==-9999] = np.nan # set no data value to NaN
     DEM_x = np.linspace(AOI_UTM.geometry.bounds.minx[0], AOI_UTM.geometry.bounds.maxx[0], num=np.shape(DEM_np)[1])
     DEM_y = np.linspace(AOI_UTM.geometry.bounds.miny[0], AOI_UTM.geometry.bounds.maxy[0], num=np.shape(DEM_np)[0])
 
