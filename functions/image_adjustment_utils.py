@@ -7,10 +7,11 @@ import numpy as np
 from pyproj import Proj, transform, Transformer
 import matplotlib.pyplot as plt
 import subprocess
-from scipy.interpolate import interp2d
 import os
-from shapely.geometry import Polygon
-from scipy.interpolate import interp2d, griddata
+from shapely.geometry import Polygon, MultiPolygon, shape
+from scipy.interpolate import interp2d
+from scipy.stats import iqr
+import glob
 
 # --------------------------------------------------
 def into_range(x, range_min, range_max):
@@ -116,7 +117,7 @@ def sunpos(when, location, refraction):
     return (round(azimuth, 2), round(elevation, 2))
 
 # --------------------------------------------------
-def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path, out_path, skip_clipped, plot_results):
+def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_path, out_path, skip_clipped, plot_results):
     '''
     Adjust image using by generating a hillshade model and minimizing the standard deviation of each band within the defined SCA
     
@@ -124,8 +125,8 @@ def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path
     ----------
     crs: float
         Coordinate Reference System (EPSG code)
-    SCA:  shapely.geometry.polygon.Polygon
-        snow-covered area, where the band standard deviation will be minimized
+    polygon:  shapely.geometry.polygon.Polygon
+            polygon, where the band standard deviation will be minimized
     im: rasterio file
         input image
     im_name: str =
@@ -193,21 +194,21 @@ def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path
         
     # -----filter image points outside the SCA
     im_x_mesh, im_y_mesh = np.meshgrid(im_x, im_y)
-    b_SCA = b[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                      (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-    g_SCA = g[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                      (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-    r_SCA = r[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                      (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-    nir_SCA = nir[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                           (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
+    b_polygon = b[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
+                      (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
+    g_polygon = g[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
+                      (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
+    r_polygon = r[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
+                      (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
+    nir_polygon = nir[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
+                           (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
                                
     # -----Return if image does not contain real values within the SCA
-    if ((np.min(SCA.exterior.xy[0])>np.min(im_x))
-        & (np.max(SCA.exterior.xy[0])<np.max(im_x))
-        & (np.min(SCA.exterior.xy[1])>np.min(im_y))
-        & (np.max(SCA.exterior.xy[1])<np.max(im_y))
-        & (np.nanmean(b_SCA)>0))==False:
+    if ((np.min(polygon.exterior.xy[0])>np.min(im_x))
+        & (np.max(polygon.exterior.xy[0])<np.max(im_x))
+        & (np.min(polygon.exterior.xy[1])>np.min(im_y))
+        & (np.max(polygon.exterior.xy[1])<np.max(im_y))
+        & (np.nanmean(b_polygon)>0))==False:
         
         print('image does not contain real values within the SCA... skipping.')
         im_corrected_name = 'N/A'
@@ -274,11 +275,11 @@ def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path
     hs_resamp = rio.open(hs_resamp_fn).read(1)
     print('resampled hillshade model loaded from file')
     # -----filter hillshade model points outside the SCA
-    hs_SCA = hs_resamp[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) & (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
+    hs_polygon = hs_resamp[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) & (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
 
     # -----normalize hillshade model
     hs_norm = (hs_resamp - np.min(hs_resamp)) / (np.max(hs_resamp) - np.min(hs_resamp))
-    hs_SCA_norm = (hs_SCA - np.min(hs_SCA)) / (np.max(hs_SCA) - np.min(hs_SCA))
+    hs_polygon_norm = (hs_polygon - np.min(hs_polygon)) / (np.max(hs_polygon) - np.min(hs_polygon))
 
             # -----plot resampled, normalized hillshade model for sanity check
     #        fig, (ax1, ax2) = plt.subplots(1,2,figsize=(12,8))
@@ -294,17 +295,17 @@ def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path
     # define scalars to test
     hs_scalars = np.linspace(0,0.5,num=21)
     # blue
-    b_SCA_mu = np.zeros(len(hs_scalars)) # mean
-    b_SCA_sigma =np.zeros(len(hs_scalars)) # std
+    b_polygon_mu = np.zeros(len(hs_scalars)) # mean
+    b_polygon_sigma =np.zeros(len(hs_scalars)) # std
     # green
-    g_SCA_mu = np.zeros(len(hs_scalars)) # mean
-    g_SCA_sigma = np.zeros(len(hs_scalars)) # std
+    g_polygon_mu = np.zeros(len(hs_scalars)) # mean
+    g_polygon_sigma = np.zeros(len(hs_scalars)) # std
     # red
-    r_SCA_mu = np.zeros(len(hs_scalars)) # mean
-    r_SCA_sigma = np.zeros(len(hs_scalars)) # std
+    r_polygon_mu = np.zeros(len(hs_scalars)) # mean
+    r_polygon_sigma = np.zeros(len(hs_scalars)) # std
     # nir
-    nir_SCA_mu = np.zeros(len(hs_scalars)) # mean
-    nir_SCA_sigma = np.zeros(len(hs_scalars)) # std
+    nir_polygon_mu = np.zeros(len(hs_scalars)) # mean
+    nir_polygon_sigma = np.zeros(len(hs_scalars)) # std
     i=0 # loop counter
     for hs_scalar in hs_scalars:
         # full image
@@ -313,24 +314,24 @@ def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path
         r_adj = r - (hs_norm * hs_scalar)
         nir_adj = nir - (hs_norm * hs_scalar)
         # SCA
-        b_SCA_mu[i] = np.nanmean(b_SCA - (hs_SCA_norm * hs_scalar))
-        b_SCA_sigma[i] = np.nanstd(b_SCA - (hs_SCA_norm * hs_scalar))
-        g_SCA_mu[i] = np.nanmean(g_SCA - (hs_SCA_norm * hs_scalar))
-        g_SCA_sigma[i] = np.nanstd(g_SCA - (hs_SCA_norm * hs_scalar))
-        r_SCA_mu[i] = np.nanmean(r_SCA - (hs_SCA_norm * hs_scalar))
-        r_SCA_sigma[i] = np.nanstd(r_SCA - (hs_SCA_norm * hs_scalar))
-        nir_SCA_mu[i] = np.nanmean(nir_SCA - (hs_SCA_norm * hs_scalar))
-        nir_SCA_sigma[i] = np.nanstd(nir_SCA - (hs_SCA_norm * hs_scalar))
+        b_polygon_mu[i] = np.nanmean(b_polygon- (hs_polygon_norm * hs_scalar))
+        b_polygon_sigma[i] = np.nanstd(b_polygon- (hs_polygon_norm * hs_scalar))
+        g_polygon_mu[i] = np.nanmean(g_polygon- (hs_polygon_norm * hs_scalar))
+        g_polygon_sigma[i] = np.nanstd(g_polygon- (hs_polygon_norm * hs_scalar))
+        r_polygon_mu[i] = np.nanmean(r_polygon- (hs_polygon_norm * hs_scalar))
+        r_polygon_sigma[i] = np.nanstd(r_polygon- (hs_polygon_norm * hs_scalar))
+        nir_polygon_mu[i] = np.nanmean(nir_polygon- (hs_polygon_norm * hs_scalar))
+        nir_polygon_sigma[i] = np.nanstd(nir_polygon- (hs_polygon_norm * hs_scalar))
         i+=1 # increase loop counter
 
     # -----Determine optimal scalar for each image band
-    Ib = np.where(b_SCA_sigma==np.min(b_SCA_sigma))[0][0]
+    Ib = np.where(b_polygon_sigma==np.min(b_polygon_sigma))[0][0]
     b_scalar = hs_scalars[Ib]
-    Ig = np.where(g_SCA_sigma==np.min(g_SCA_sigma))[0][0]
+    Ig = np.where(g_polygon_sigma==np.min(g_polygon_sigma))[0][0]
     g_scalar = hs_scalars[Ig]
-    Ir = np.where(r_SCA_sigma==np.min(r_SCA_sigma))[0][0]
+    Ir = np.where(r_polygon_sigma==np.min(r_polygon_sigma))[0][0]
     r_scalar = hs_scalars[Ir]
-    Inir = np.where(nir_SCA_sigma==np.min(nir_SCA_sigma))[0][0]
+    Inir = np.where(nir_polygon_sigma==np.min(nir_polygon_sigma))[0][0]
     nir_scalar = hs_scalars[Inir]
     print('Optimal scalars:  Blue   |   Green   |   Red   |   NIR')
     print(b_scalar, g_scalar, r_scalar, nir_scalar)
@@ -407,9 +408,102 @@ def apply_hillshade_correction(crs, SCA, im, im_name, im_path, DEM_path, hs_path
     print('corrected image saved to file: '+im_corrected_name)
                     
     return im_corrected_name
+
+# --------------------------------------------------
+def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM, DEM_x, DEM_y):
+    '''
+    Function to generate a polygon of the top 70th percentile elevations within the defined Area of Interest (AOI).
+    
+    Parameters
+    ----------
+    AOI:
+        must be in same coordinate reference system (CRS) as the image
+    
+    im_fns:
+    
+    im_path:
+    
+    DEM:
+    
+    DEM_x:
+    
+    DEM_y:
+    
+    Returns
+    ----------
+    polygon:
+    
+    r:
+    
+    g:
+    
+    b:
+    
+    '''
+
+    # -----Read one image that contains AOI to create polygon
+    os.chdir(im_path)
+    for i in range(0,len(im_fns)):
+        # define image filename
+        im_fn = im_fns[i]
+        # open image
+        im = rio.open(im_fn)
+        # mask the image using AOI geometry
+        mask = rio.features.geometry_mask(AOI.geometry,
+                                       im.read(1).shape,
+                                       im.transform,
+                                       all_touched=False,
+                                       invert=False)
+        # check if any image values exist within AOI
+        if (0 in mask.flatten()):
+            break
+
+    # -----Get image band shape and define image coordinates
+    b = im.read(1).astype(float)
+    g = im.read(2).astype(float)
+    r = im.read(3).astype(float)
+    nir = im.read(4).astype(float)
+    if (np.nanmax(b) > 1e3):
+        im_scalar = 10000 # scalar multiplier for image reflectance values
+        b = b / im_scalar
+        g = g / im_scalar
+        r = r / im_scalar
+        nir = nir / im_scalar
+    # define coordinates grid
+    im_x = np.linspace(im.bounds.left, im.bounds.right, num=np.shape(b)[1])
+    im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(b)[0])
+    
+    # -----Create mask from AOI on image grid
+    mask = rio.features.geometry_mask(AOI.geometry,
+                                           b.shape,
+                                           im.transform,
+                                           all_touched=False,
+                                           invert=False)
+    # -----Regrid DEM to image coordinates
+    f_DEM = interp2d(DEM_x, DEM_y, DEM)
+    DEM_regrid = f_DEM(im_x, im_y)
+    
+    # -----Mask DEM outside the AOI and the bottom 70th percentile of elevations
+    DEM_regrid_AOImasked = np.where(mask==0, DEM_regrid, np.nan)
+    DEM_P70 = np.round(np.nanmedian(DEM_regrid_AOImasked) + iqr(DEM_regrid_AOImasked, rng=(30,70), nan_policy='omit'))
+    DEM_regrid_AOImasked_P70masked = np.where(DEM_regrid_AOImasked > DEM_P70, DEM_regrid_AOImasked, np.nan)
+    mask = np.where(~np.isnan(DEM_regrid_AOImasked_P70masked), 1, 0)
+    
+    # -----Convert mask to polygon
+    # adapted from: https://rocreguant.com/convert-a-mask-into-a-polygon-for-images-using-shapely-and-rasterio/1786/
+    all_polygons = []
+    for s, value in rio.features.shapes(mask.astype(np.int16), mask=(mask >0), transform=im.transform):
+        all_polygons.append(shape(s))
+    all_polygons = MultiPolygon(all_polygons)
+    # only use one polygon
+    if len(all_polygons.geoms) > 1:
+        polygon = all_polygons[1]
+        
+    return polygon, im_fn, im, r, g, b, im_x, im_y
+    
     
 # --------------------------------------------------
-def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, plot_results):
+def adjust_image_radiometry(im, im_fn, im_path, polygon, out_path, skip_clipped, plot_results):
     '''
     Adjust PlanetScope image band radiometry using the band values in a defined snow-covered area (SCA) and the expected surface reflectance of snow.
     
@@ -417,12 +511,12 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
     ----------
     im: rasterio file
         input image
-    im_name: str
+    im_fn: str
         file name of the input image
     im_path: str
         path in directory to the input image
-    SCA: shapely.geometry.polygon.Polygon
-        snow-covered area used to adjust band values
+    polygon: shapely.geometry.polygon.Polygon
+        polygon used to adjust band values
     out_path: str
         path in directory where adjusted image file will be saved
     skip_clipped: bool
@@ -444,8 +538,8 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
         os.mkdir(out_path)
         print('created output directory:',out_path)
     # adjusted image file name
-    im_adj_name = im_name[0:-4]+'_adj.tif'
-    if os.path.exists(out_path + im_adj_name)==True:
+    im_adj_fn = im_fn[0:-4]+'_adj.tif'
+    if os.path.exists(out_path + im_adj_fn)==True:
         print('adjusted image already exists in directory...skipping.')
 
     else:
@@ -481,8 +575,8 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
         g = im.read(2).astype(float)
         r = im.read(3).astype(float)
         nir = im.read(4).astype(float)
-        im_scalar = 10000 # scalar multiplier for image reflectance values
         if (np.nanmax(b) > 1e3):
+            im_scalar = 10000 # scalar multiplier for image reflectance values
             b = b / im_scalar
             g = g / im_scalar
             r = r / im_scalar
@@ -498,36 +592,36 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
         if skip_clipped==True:
             if (np.nanmax(b) < 0.8) or (np.nanmax(g) < 0.8) or (np.nanmax(r) < 0.8):
                 print('image bands appear clipped... skipping.')
-                im_adj_name = 'N/A'
-                return im_adj_name
+                im_adj_fn = 'N/A'
+                return im_adj_fn
             
         # -----Define coordinates grid
         im_x = np.linspace(im.bounds.left, im.bounds.right, num=np.shape(b)[1])
         im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(b)[0])
         im_x_mesh, im_y_mesh = np.meshgrid(im_x, im_y)
 
-        # -----Return if image does not contain SCA
-        if ((np.min(SCA.exterior.xy[0]) > np.min(im_x))
-            & (np.max(SCA.exterior.xy[0]) < np.max(im_x))
-            & (np.min(SCA.exterior.xy[1]) > np.min(im_y))
-            & (np.max(SCA.exterior.xy[1]) < np.max(im_y)))==False:
-            print('image does not contain SCA... skipping.')
-            im_adj_name = 'N/A'
-            return im_adj_name
+        # -----Return if image does not contain polygon
+        # mask the image using polygon geometry
+        mask = rio.features.geometry_mask([polygon],
+                                       b.shape,
+                                       im.transform,
+                                       all_touched=False,
+                                       invert=False)
+        # skip if image does not contain polygon
+        if (0 not in mask.flatten()):
+            print('image does not contain polygon... skipping.')
+            im_adj_fn = 'N/A'
+            return im_adj_fn
             
-        # -----Filter image points outside the SCA
-        b_SCA = b[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                          (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-        g_SCA = g[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                          (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-        r_SCA = r[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                          (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
-        nir_SCA = nir[np.where((im_x_mesh >= SCA.bounds[0]) & (im_x_mesh <= SCA.bounds[2]) &
-                               (im_y_mesh >= SCA.bounds[1]) & (im_y_mesh <= SCA.bounds[3]))]
+        # -----Filter image points outside the polygon
+        b_polygon = b[mask==0]
+        g_polygon = g[mask==0]
+        r_polygon = r[mask==0]
+        nir_polygon = nir[mask==0]
                                   
         # -----Return if no real values exist within the SCA
-        if (np.nanmean(b_SCA==0)) or (np.isnan(np.nanmean(b_SCA))):
-            print('image does not contain any real values within the SCA... skipping.')
+        if (np.nanmean(b_polygon==0)) or (np.isnan(np.nanmean(b_polygon))):
+            print('image does not contain any real values within the polygon... skipping.')
             im_adj_name = 'N/A'
             return im_adj_name
             
@@ -536,28 +630,28 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
         # A = (bright_adjusted - dark_adjusted) / (bright - dark)
         # B = (dark*bright_adjusted - bright*dark_adjusted) / (bright - dark)
         # blue band
-        bright_b = np.nanmedian(b_SCA) # SR at bright point
+        bright_b = np.nanmedian(b_polygon) # SR at bright point
         dark_b = np.nanmin(b) # SR at darkest point
         A = (bright_b_adj - dark_adj) / (bright_b - dark_b)
         B = (dark_b*bright_b_adj - bright_b*dark_adj) / (bright_b - dark_b)
         b_adj = (b * A) - B
         b_adj = np.where(b==0, np.nan, b_adj) # replace no data values with nan
         # green band
-        bright_g = np.nanmedian(g_SCA) # SR at bright point
+        bright_g = np.nanmedian(g_polygon) # SR at bright point
         dark_g = np.nanmin(g) # SR at darkest point
         A = (bright_g_adj - dark_adj) / (bright_g - dark_g)
         B = (dark_g*bright_g_adj - bright_g*dark_adj) / (bright_g - dark_g)
         g_adj = (g * A) - B
         g_adj = np.where(g==0, np.nan, g_adj) # replace no data values with nan
         # red band
-        bright_r = np.nanmedian(r_SCA) # SR at bright point
+        bright_r = np.nanmedian(r_polygon) # SR at bright point
         dark_r = np.nanmin(r) # SR at darkest point
         A = (bright_r_adj - dark_adj) / (bright_r - dark_r)
         B = (dark_r*bright_r_adj - bright_r*dark_adj) / (bright_r - dark_r)
         r_adj = (r * A) - B
         r_adj = np.where(r==0, np.nan, r_adj) # replace no data values with nan
         # nir band
-        bright_nir = np.nanmedian(nir_SCA) # SR at bright point
+        bright_nir = np.nanmedian(nir_polygon) # SR at bright point
         dark_nir = np.nanmin(nir) # SR at darkest point
         A = (bright_nir_adj - dark_adj) / (bright_nir - dark_nir)
         B = (dark_nir*bright_nir_adj - bright_nir*dark_adj) / (bright_nir - dark_nir)
@@ -581,8 +675,8 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
             # original image
             im_original = ax1.imshow(np.dstack([r, g, b]),
                         extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
-            ax1.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]],
-                     color='black', linewidth=2, label='SCA')
+            ax1.plot([x/1000 for x in polygon.exterior.xy[0]], [y/1000 for y in polygon.exterior.xy[1]],
+                     color='black', linewidth=2, label='polygon')
             ax1.legend()
             ax1.set_xlabel('Easting [km]')
             ax1.set_ylabel('Northing [km]')
@@ -590,8 +684,8 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
             # adjusted image
             ax2.imshow(np.dstack([r_adj, g_adj, b_adj]),
                 extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
-            ax2.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]],
-                     color='black', linewidth=2, label='SCA')
+            ax2.plot([x/1000 for x in polygon.exterior.xy[0]], [y/1000 for y in polygon.exterior.xy[1]],
+                     color='black', linewidth=2, label='polygon')
             ax2.set_xlabel('Easting [km]')
             ax2.set_title('Adjusted image')
             # band histograms
@@ -623,7 +717,7 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
                          'crs':im.crs,
                          'transform':im.transform})
         # write to file
-        with rio.open(out_path+im_adj_name, mode='w',**out_meta) as dst:
+        with rio.open(out_path+im_adj_fn, mode='w',**out_meta) as dst:
             # multiply bands by im_scalar and convert datatype to uint64 to decrease file size
             b_adj = (b_adj * im_scalar)
             g_adj = (g_adj * im_scalar)
@@ -634,7 +728,7 @@ def adjust_image_radiometry(im, im_name, im_path, SCA, out_path, skip_clipped, p
             dst.write_band(2,g_adj)
             dst.write_band(3,r_adj)
             dst.write_band(4,nir_adj)
-        print('adjusted image saved to file: '+im_adj_name)
+        print('adjusted image saved to file: '+im_adj_fn)
 
-    return im_adj_name
+    return im_adj_fn
 
