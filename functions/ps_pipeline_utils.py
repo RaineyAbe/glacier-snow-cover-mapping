@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import subprocess
 import os
 from shapely.geometry import Polygon, MultiPolygon, shape
-from scipy.interpolate import interp2d
+from scipy.interpolate import interp2d, griddata
 from scipy.stats import iqr
 import glob
 import ee
@@ -21,6 +21,170 @@ from scipy import stats
 import geemap
 from shapely.geometry import Polygon
 import matplotlib
+
+# --------------------------------------------------
+def plot_im_RGB_histogram(im_path, im_fn):
+    '''
+    Plot PlanetScope 4-band RGB image with histograms for the B, G, R, and NIR bands.
+    
+    Parameters
+    ----------
+    im_path: str
+        path in directory to image
+        
+    im_fn: str
+        image file name
+    
+    Returns
+    ----------
+    fig: matplotlib.figure
+        resulting figure handle
+    
+    '''
+    
+    # load image
+    os.chdir(im_path)
+    im = rio.open(im_fn)
+    
+    # load bands (blue, green, red, near infrared)
+    b = im.read(1).astype(float)
+    g = im.read(2).astype(float)
+    r = im.read(3).astype(float)
+    nir = im.read(4).astype(float)
+    if np.nanmax(b) > 1e3:
+        im_scalar = 10000
+        b = b / im_scalar
+        g = g / im_scalar
+        r = r / im_scalar
+        nir = nir / im_scalar
+    # replace no data values with NaN
+    b[b==0] = np.nan
+    g[g==0] = np.nan
+    r[r==0] = np.nan
+    nir[nir==0] = np.nan
+        
+    # define coordinates grid
+    im_x = np.linspace(im.bounds.left, im.bounds.right, num=np.shape(b)[1])
+    im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(b)[0])
+    
+    # plot RGB image and band histograms
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10,6), gridspec_kw={'height_ratios': [1]})
+    plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
+    ax1.imshow(np.dstack([r, g, b]), aspect='auto',
+               extent=(np.min(im_x)/1000, np.max(im_x/1000), np.min(im_y)/1000, np.max(im_y)/1000))
+    ax1.set_xlabel('Easting [km]')
+    ax1.set_ylabel('Northing [km]')
+    ax2.hist(b.flatten(), color='blue', histtype='step', bins=100, label='blue')
+    ax2.hist(g.flatten(), color='green', histtype='step', bins=100, label='green')
+    ax2.hist(r.flatten(), color='red', histtype='step', bins=100, label='red')
+    ax2.hist(nir.flatten(), color='brown', histtype='step', linewidth=2, bins=100, label='NIR')
+    ax2.set_xlabel('Surface reflectance')
+    ax2.set_ylabel('Pixel counts')
+    ax2.grid()
+    ax2.legend(loc='right')
+    fig.suptitle(im_fn)
+    fig.tight_layout()
+    plt.show()
+    
+    return fig
+    
+# --------------------------------------------------
+def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
+    '''
+    Mosaic PlanetScope 4-band images captured within the same hour using gdal_merge.py. Skips images which contain no real data in the AOI. Adapted from code developed by Jukes Liu.
+    
+    Parameters
+    ----------
+    im_path: str
+    
+    im_fns: list of str
+    
+    ext: str
+    
+    out_path: str
+    
+    AOI: geopandas.GeoDataFrame
+    
+    plot_results: bool
+    
+    Returns
+    ----------
+    
+    '''
+    # ----Grab all unique scenes (images captured within the same hour)
+    unique_scenes = []
+    for scene in im_fns:
+        date = scene[0:11]
+        unique_scenes.append(date)
+    unique_scenes = list(set(unique_scenes))
+    unique_scenes.sort() # sort chronologically
+    
+    # -----Loop through unique scenes
+    for scene in unique_scenes:
+        
+        # define the out path with correct extension
+        if ext == 'DN_udm.tif':
+            out_im_fn = os.path.join(scene + "_DN_mask.tif")
+        elif ext == 'udm2.tif':
+            out_im_fn = os.path.join(scene + "_mask.tif")
+        else:
+            out_im_fn = os.path.join(scene + ".tif")
+        print(out_im_fn)
+            
+        # check if image mosaic already exists in directory
+        if os.path.exists(out_path + out_im_fn)==True:
+            print("image mosaic already exists... skipping.")
+            print(" ")
+            
+            # plot output file
+            if plot_results:
+                fig = plot_im_RGB_histogram(out_path, out_im_fn)
+            
+        else:
+            
+            file_paths = [] # files from the same hour to mosaic together
+            for im_fn in im_fns: # check all files
+                if (scene in im_fn): # if they match the scene date
+                    im = rio.open(im_path + im_fn) # open image
+                    AOI_UTM = AOI.to_crs(str(im.crs)[5:]) # reproject AOI to image CRS
+                    # mask the image using AOI geometry
+                    b = im.read(1).astype(float) # blue band
+                    mask = rio.features.geometry_mask(AOI_UTM.geometry,
+                                                   b.shape,
+                                                   im.transform,
+                                                   all_touched=False,
+                                                   invert=False)
+                    # check if real data values exist within AOI
+                    b_AOI = b[mask==0] # grab blue band values within AOI
+                    # set no-data values to NaN
+                    b_AOI[b_AOI==-9999] = np.nan
+                    b_AOI[b_AOI==0] = np.nan
+                    if (len(b_AOI[~np.isnan(b_AOI)]) > 0):
+                        file_paths.append(im_path + im_fn) # add the path to the file
+                        
+            # check if any filepaths were added
+            if len(file_paths) > 0:
+
+                # construct the gdal_merge command
+                cmd = 'gdal_merge.py -v '
+
+                # add input files to command
+                for file_path in file_paths:
+                    cmd += file_path+' '
+
+                cmd += '-o ' + out_path + out_im_fn
+
+                # run the command
+                p = subprocess.run(cmd, shell=True, capture_output=True)
+                print(p)
+            
+                # plot output file
+                if plot_results:
+                    fig = plot_im_RGB_histogram(out_path, out_im_fn)
+            else:
+                
+                print("No real data values within the AOI for images on this date... skipping.")
+                print(" ")
 
 # --------------------------------------------------
 def into_range(x, range_min, range_max):
@@ -160,22 +324,6 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
     '''
 
     print('HILLSHADE CORRECTION')
-    # -----Load instrument name and cloud cover percentage from metadata
-    # read the content of the file opened
-#    inst = meta_content[53].split('>')[1]
-#    if "PS2" in inst:
-#        inst = inst[0:3]
-#    elif "PSB" in inst:
-#        inst = inst[0:6]
-#    # read cloud cover percentage from the file
-#    cc = meta_content[148].split('>')[1]
-#    cc = cc.split('<')[0]
-#    cc = float(cc)
-#    # return if cloud cover is above max_cloud_cover
-#    if cc > max_cloud_cover:
-#        print('cloud cover exceeds max_cloud_cover... skipping')
-#        im_corrected_name = 'N/A'
-#        return im_corrected_name
 
     # -----Read image bands
     im_scalar = 10000
@@ -442,12 +590,17 @@ def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM, DEM_x, DEM_y):
     ----------
     polygon:
     
-    r:
+    b: numpy.ndarray
+        surface reflectance of the blue image band
     
-    g:
+    g: numpy.ndarray
+        surface reflectance of the green image band
     
-    b:
+    r: numpy.ndarray
+        surface reflectance of the red image band
     
+    nir: numpy.ndarray
+        surface reflectance of the near-infrared image band
     '''
 
     # -----Read one image that contains AOI to create polygon
@@ -489,15 +642,18 @@ def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM, DEM_x, DEM_y):
                                            all_touched=False,
                                            invert=False)
     # -----Regrid DEM to image coordinates
-    f_DEM = interp2d(DEM_x, DEM_y, DEM)
-    DEM_regrid = f_DEM(im_x, im_y)
-    
+    DEM_x_mesh, DEM_y_mesh = np.meshgrid(DEM_x, DEM_y)
+    im_x_mesh, im_y_mesh = np.meshgrid(im_x, im_y)
+    DEM_regrid = griddata(list(zip(DEM_x_mesh.flatten(), DEM_y_mesh.flatten())),
+        np.flipud(DEM).flatten(),
+        (im_x_mesh, im_y_mesh))
+
     # -----Mask DEM outside the AOI and the bottom percentile of elevations
     DEM_regrid_AOImasked = np.where(mask==0, DEM_regrid, np.nan)
-    DEM_P = np.nanmedian(DEM_regrid_AOImasked) + iqr(DEM_regrid_AOImasked, rng=(30,70), nan_policy='omit')
+    DEM_P = np.nanmedian(DEM_regrid_AOImasked) + iqr(DEM_regrid_AOImasked, rng=(30,70), nan_policy='omit')/2
     DEM_regrid_AOImasked_Pmasked = np.where(DEM_regrid_AOImasked > DEM_P, DEM_regrid_AOImasked, np.nan)
     mask = np.where(~np.isnan(DEM_regrid_AOImasked_Pmasked), 1, 0)
-    
+
     # -----Convert mask to polygon
     # adapted from: https://rocreguant.com/convert-a-mask-into-a-polygon-for-images-using-shapely-and-rasterio/1786/
     all_polygons = []
@@ -546,7 +702,7 @@ def adjust_image_radiometry(im, im_fn, im_path, polygon, out_path, skip_clipped,
     g = im.read(2).astype(float)
     r = im.read(3).astype(float)
     nir = im.read(4).astype(float)
-    if (np.nanmax(b) > 1e3):
+    if np.nanmax(b) > 1e3:
         im_scalar = 10000 # scalar multiplier for image reflectance values
         b = b / im_scalar
         g = g / im_scalar
@@ -570,7 +726,7 @@ def adjust_image_radiometry(im, im_fn, im_path, polygon, out_path, skip_clipped,
     im_adj_fn = im_fn[0:-4]+'_adj.tif' # adjusted image file name
     if os.path.exists(out_path + im_adj_fn)==True:
     
-        print('adjusted image already exists in directory... loading from file.')
+        print('adjusted image already exists... loading from file.')
         
         # load adjusted image from file
         im_adj = rio.open(out_path+im_adj_fn)
@@ -609,7 +765,7 @@ def adjust_image_radiometry(im, im_fn, im_path, polygon, out_path, skip_clipped,
             return im_adj_fn
             
         # -----Return if no real values exist within the SCA
-        if (np.nanmean(b_polygon==0)) or (np.isnan(np.nanmean(b_polygon))):
+        if (np.nanmean(b==0)) or (np.isnan(np.nanmean(b))):
             print('image does not contain any real values within the polygon... skipping.')
             im_adj_name = 'N/A'
             return im_adj_name
@@ -674,16 +830,11 @@ def adjust_image_radiometry(im, im_fn, im_path, polygon, out_path, skip_clipped,
                          'transform':im.transform})
         # write to file
         with rio.open(out_path+im_adj_fn, mode='w',**out_meta) as dst:
-            # multiply bands by im_scalar and convert datatype to uint64 to decrease file size
-            b_adj = (b_adj * im_scalar)
-            g_adj = (g_adj * im_scalar)
-            r_adj = (r_adj * im_scalar)
-            nir_adj = (nir_adj * im_scalar)
-            # write bands
-            dst.write_band(1,b_adj)
-            dst.write_band(2,g_adj)
-            dst.write_band(3,r_adj)
-            dst.write_band(4,nir_adj)
+            # write bands - multiply bands by im_scalar and convert datatype to uint64 to decrease file size
+            dst.write_band(1, b_adj * im_scalar)
+            dst.write_band(2, g_adj * im_scalar)
+            dst.write_band(3, r_adj * im_scalar)
+            dst.write_band(4, nir_adj * im_scalar)
         print('adjusted image saved to file: '+im_adj_fn)
 
     # -----Plot RGB images and band histograms for the original and adjusted image
@@ -862,72 +1013,6 @@ def crop_images_to_AOI(im_path, im_fns, AOI):
             print(cropped_im_fn + " saved")
             
     return cropped_im_path
-
-# --------------------------------------------------
-def plot_im_RGB_histogram(im_path, im_fn):
-    '''
-    Plot PlanetScope 4-band RGB image with histograms for the B, G, R, and NIR bands.
-    
-    Parameters
-    ----------
-    im_path: str
-        path in directory to image
-        
-    im_fn: str
-        image file name
-    
-    Returns
-    ----------
-    fig: matplotlib.figure
-        resulting figure handle
-    
-    '''
-    
-    # load image
-    os.chdir(im_path)
-    im = rio.open(im_fn)
-    
-    # load bands (blue, green, red, near infrared)
-    b = im.read(1).astype(float)
-    g = im.read(2).astype(float)
-    r = im.read(3).astype(float)
-    nir = im.read(4).astype(float)
-    if np.nanmax(b) > 1e3:
-        im_scalar = 10000
-        b = b / im_scalar
-        g = g / im_scalar
-        r = r / im_scalar
-        nir = nir / im_scalar
-    # replace no data values with NaN
-    b[b==0] = np.nan
-    g[g==0] = np.nan
-    r[r==0] = np.nan
-    nir[nir==0] = np.nan
-        
-    # define coordinates grid
-    im_x = np.linspace(im.bounds.left, im.bounds.right, num=np.shape(b)[1])
-    im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(b)[0])
-    
-    # plot RGB image and band histograms
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10,6), gridspec_kw={'height_ratios': [1]})
-    plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
-    ax1.imshow(np.dstack([r, g, b]), aspect='auto',
-               extent=(np.min(im_x)/1000, np.max(im_x/1000), np.min(im_y)/1000, np.max(im_y)/1000))
-    ax1.set_xlabel('Easting [km]')
-    ax1.set_ylabel('Northing [km]')
-    ax2.hist(b.flatten(), color='blue', histtype='step', bins=100, label='blue')
-    ax2.hist(g.flatten(), color='green', histtype='step', bins=100, label='green')
-    ax2.hist(r.flatten(), color='red', histtype='step', bins=100, label='red')
-    ax2.hist(nir.flatten(), color='brown', histtype='step', linewidth=2, bins=100, label='NIR')
-    ax2.set_xlabel('Surface reflectance')
-    ax2.set_ylabel('Pixel counts')
-    ax2.grid()
-    ax2.legend(loc='right')
-    fig.suptitle(im_fn)
-    fig.tight_layout()
-    plt.show()
-    
-    return fig
 
 # --------------------------------------------------
 def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir, DEM_x, DEM_y, DEM):
