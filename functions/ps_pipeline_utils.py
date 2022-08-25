@@ -21,6 +21,7 @@ from scipy import stats
 import geemap
 from shapely.geometry import Polygon
 import matplotlib
+from osgeo import gdal
 
 # --------------------------------------------------
 def plot_im_RGB_histogram(im_path, im_fn):
@@ -122,69 +123,70 @@ def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
     # -----Loop through unique scenes
     for scene in unique_scenes:
         
-        # define the out path with correct extension
-        if ext == 'DN_udm.tif':
-            out_im_fn = os.path.join(scene + "_DN_mask.tif")
-        elif ext == 'udm2.tif':
-            out_im_fn = os.path.join(scene + "_mask.tif")
-        else:
-            out_im_fn = os.path.join(scene + ".tif")
-        print(out_im_fn)
-            
-        # check if image mosaic already exists in directory
-        if os.path.exists(out_path + out_im_fn)==True:
-            print("image mosaic already exists... skipping.")
-            print(" ")
-            
-            # plot output file
-            if plot_results:
-                fig = plot_im_RGB_histogram(out_path, out_im_fn)
-            
-        else:
-            
-            file_paths = [] # files from the same hour to mosaic together
-            for im_fn in im_fns: # check all files
-                if (scene in im_fn): # if they match the scene date
-                    im = rio.open(im_path + im_fn) # open image
-                    AOI_UTM = AOI.to_crs(str(im.crs)[5:]) # reproject AOI to image CRS
-                    # mask the image using AOI geometry
-                    b = im.read(1).astype(float) # blue band
-                    mask = rio.features.geometry_mask(AOI_UTM.geometry,
-                                                   b.shape,
-                                                   im.transform,
-                                                   all_touched=False,
-                                                   invert=False)
-                    # check if real data values exist within AOI
-                    b_AOI = b[mask==0] # grab blue band values within AOI
-                    # set no-data values to NaN
-                    b_AOI[b_AOI==-9999] = np.nan
-                    b_AOI[b_AOI==0] = np.nan
-                    if (len(b_AOI[~np.isnan(b_AOI)]) > 0):
-                        file_paths.append(im_path + im_fn) # add the path to the file
-                        
-            # check if any filepaths were added
-            if len(file_paths) > 0:
-
-                # construct the gdal_merge command
-                cmd = 'gdal_merge.py -v '
-
-                # add input files to command
-                for file_path in file_paths:
-                    cmd += file_path+' '
-
-                cmd += '-o ' + out_path + out_im_fn
-
-                # run the command
-                p = subprocess.run(cmd, shell=True, capture_output=True)
-                print(p)
-            
+        if '202108' in scene:
+            # define the out path with correct extension
+            if ext == 'DN_udm.tif':
+                out_im_fn = os.path.join(scene + "_DN_mask.tif")
+            elif ext == 'udm2.tif':
+                out_im_fn = os.path.join(scene + "_mask.tif")
+            else:
+                out_im_fn = os.path.join(scene + ".tif")
+            print(out_im_fn)
+                
+            # check if image mosaic already exists in directory
+            if os.path.exists(out_path + out_im_fn)==True:
+                print("image mosaic already exists... skipping.")
+                print(" ")
+                
                 # plot output file
                 if plot_results:
                     fig = plot_im_RGB_histogram(out_path, out_im_fn)
+                
             else:
                 
-                print("No real data values within the AOI for images on this date... skipping.")
-                print(" ")
+                file_paths = [] # files from the same hour to mosaic together
+                for im_fn in im_fns: # check all files
+                    if (scene in im_fn): # if they match the scene date
+                        im = rio.open(im_path + im_fn) # open image
+                        AOI_UTM = AOI.to_crs(str(im.crs)[5:]) # reproject AOI to image CRS
+                        # mask the image using AOI geometry
+                        b = im.read(1).astype(float) # blue band
+                        mask = rio.features.geometry_mask(AOI_UTM.geometry,
+                                                       b.shape,
+                                                       im.transform,
+                                                       all_touched=False,
+                                                       invert=False)
+                        # check if real data values exist within AOI
+                        b_AOI = b[mask==0] # grab blue band values within AOI
+                        # set no-data values to NaN
+                        b_AOI[b_AOI==-9999] = np.nan
+                        b_AOI[b_AOI==0] = np.nan
+                        if (len(b_AOI[~np.isnan(b_AOI)]) > 0):
+                            file_paths.append(im_path + im_fn) # add the path to the file
+                            
+                # check if any filepaths were added
+                if len(file_paths) > 0:
+
+                    # construct the gdal_merge command
+                    cmd = 'gdal_merge.py -v '
+
+                    # add input files to command
+                    for file_path in file_paths:
+                        cmd += file_path+' '
+
+                    cmd += '-o ' + out_path + out_im_fn
+
+                    # run the command
+                    p = subprocess.run(cmd, shell=True, capture_output=True)
+                    print(p)
+                
+                    # plot output file
+                    if plot_results:
+                        fig = plot_im_RGB_histogram(out_path, out_im_fn)
+                else:
+                    
+                    print("No real data values within the AOI for images on this date... skipping.")
+                    print(" ")
 
 # --------------------------------------------------
 def into_range(x, range_min, range_max):
