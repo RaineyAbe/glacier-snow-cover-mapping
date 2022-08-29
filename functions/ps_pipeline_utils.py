@@ -104,14 +104,20 @@ def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
     
     out_path: str
     
-    AOI: geopandas.GeoDataFrame
-    
+    AOI: geopandas.geodataframe.GeoDataFrame
+        Area of interest. If no real data exist within the AOI, function will exit. AOI must be in the same CRS as the images.
     plot_results: bool
     
     Returns
     ----------
     
     '''
+    
+    # -----Create output directory if it does not exist
+    if os.path.isdir(out_path)==0:
+        os.mkdir(out_path)
+        print('Created directory for image mosaics: ' + out_path)
+    
     # ----Grab all unique scenes (images captured within the same hour)
     unique_scenes = []
     for scene in im_fns:
@@ -123,70 +129,69 @@ def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
     # -----Loop through unique scenes
     for scene in unique_scenes:
         
-        if '202108' in scene:
-            # define the out path with correct extension
-            if ext == 'DN_udm.tif':
-                out_im_fn = os.path.join(scene + "_DN_mask.tif")
-            elif ext == 'udm2.tif':
-                out_im_fn = os.path.join(scene + "_mask.tif")
-            else:
-                out_im_fn = os.path.join(scene + ".tif")
-            print(out_im_fn)
-                
-            # check if image mosaic already exists in directory
-            if os.path.exists(out_path + out_im_fn)==True:
-                print("image mosaic already exists... skipping.")
-                print(" ")
-                
+        # define the out path with correct extension
+        if ext == 'DN_udm.tif':
+            out_im_fn = os.path.join(scene + "_DN_mask.tif")
+        elif ext == 'udm2.tif':
+            out_im_fn = os.path.join(scene + "_mask.tif")
+        else:
+            out_im_fn = os.path.join(scene + ".tif")
+        print(out_im_fn)
+            
+        # check if image mosaic already exists in directory
+        if os.path.exists(out_path + out_im_fn)==True:
+            print("image mosaic already exists... skipping.")
+            print(" ")
+            
+            # plot output file
+            if plot_results:
+                fig = plot_im_RGB_histogram(out_path, out_im_fn)
+            
+        else:
+            
+            file_paths = [] # files from the same hour to mosaic together
+            for im_fn in im_fns: # check all files
+                if (scene in im_fn): # if they match the scene date
+                    im = rio.open(im_path + im_fn) # open image
+                    AOI_UTM = AOI.to_crs(str(im.crs)[5:]) # reproject AOI to image CRS
+                    # mask the image using AOI geometry
+                    b = im.read(1).astype(float) # blue band
+                    mask = rio.features.geometry_mask(AOI_UTM.geometry,
+                                                   b.shape,
+                                                   im.transform,
+                                                   all_touched=False,
+                                                   invert=False)
+                    # check if real data values exist within AOI
+                    b_AOI = b[mask==0] # grab blue band values within AOI
+                    # set no-data values to NaN
+                    b_AOI[b_AOI==-9999] = np.nan
+                    b_AOI[b_AOI==0] = np.nan
+                    if (len(b_AOI[~np.isnan(b_AOI)]) > 0):
+                        file_paths.append(im_path + im_fn) # add the path to the file
+                        
+            # check if any filepaths were added
+            if len(file_paths) > 0:
+
+                # construct the gdal_merge command
+                cmd = 'gdal_merge.py -v '
+
+                # add input files to command
+                for file_path in file_paths:
+                    cmd += file_path+' '
+
+                cmd += '-o ' + out_path + out_im_fn
+
+                # run the command
+                p = subprocess.run(cmd, shell=True, capture_output=True)
+                print(p)
+            
                 # plot output file
                 if plot_results:
                     fig = plot_im_RGB_histogram(out_path, out_im_fn)
-                
             else:
                 
-                file_paths = [] # files from the same hour to mosaic together
-                for im_fn in im_fns: # check all files
-                    if (scene in im_fn): # if they match the scene date
-                        im = rio.open(im_path + im_fn) # open image
-                        AOI_UTM = AOI.to_crs(str(im.crs)[5:]) # reproject AOI to image CRS
-                        # mask the image using AOI geometry
-                        b = im.read(1).astype(float) # blue band
-                        mask = rio.features.geometry_mask(AOI_UTM.geometry,
-                                                       b.shape,
-                                                       im.transform,
-                                                       all_touched=False,
-                                                       invert=False)
-                        # check if real data values exist within AOI
-                        b_AOI = b[mask==0] # grab blue band values within AOI
-                        # set no-data values to NaN
-                        b_AOI[b_AOI==-9999] = np.nan
-                        b_AOI[b_AOI==0] = np.nan
-                        if (len(b_AOI[~np.isnan(b_AOI)]) > 0):
-                            file_paths.append(im_path + im_fn) # add the path to the file
-                            
-                # check if any filepaths were added
-                if len(file_paths) > 0:
-
-                    # construct the gdal_merge command
-                    cmd = 'gdal_merge.py -v '
-
-                    # add input files to command
-                    for file_path in file_paths:
-                        cmd += file_path+' '
-
-                    cmd += '-o ' + out_path + out_im_fn
-
-                    # run the command
-                    p = subprocess.run(cmd, shell=True, capture_output=True)
-                    print(p)
-                
-                    # plot output file
-                    if plot_results:
-                        fig = plot_im_RGB_histogram(out_path, out_im_fn)
-                else:
-                    
-                    print("No real data values within the AOI for images on this date... skipping.")
-                    print(" ")
+                print("No real data values within the AOI for images on this date... skipping.")
+                print(" ")
 
 # --------------------------------------------------
 def into_range(x, range_min, range_max):
@@ -696,7 +701,10 @@ def adjust_image_radiometry(im, im_fn, im_path, polygon, out_path, skip_clipped,
         file name of the adjusted image saved to file
     '''
     
-    print('RADIOMETRIC ADJUSTMENT')
+    # -----Create output directory if it does not exist
+    if os.path.isdir(out_path)==0:
+        os.mkdir(out_path)
+        print('Created directory for adjusted images: ' + out_path)
     
     # -----Load image
     # define bands (blue, green, red, near infrared)
@@ -1017,7 +1025,44 @@ def crop_images_to_AOI(im_path, im_fns, AOI):
     return cropped_im_path
 
 # --------------------------------------------------
-def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir, DEM_x, DEM_y, DEM):
+def plot_im_classified_histograms(im, im_x, im_y, im_dt, im_classified, snow_elev, b, g, r, nir, DEM, DEM_x, DEM_y):
+    '''
+    Plot classified images and histograms of snow elevation distribution
+    
+    Parameters
+    ----------
+    im:
+    
+    im_x:
+    
+    im_y:
+    
+    im_dt:
+    
+    im_classified:
+    
+    snow_elev:
+    
+    b:
+    
+    g:
+    
+    r:
+    
+    nir:
+    
+    DEM:
+    
+    DEM_x:
+    
+    DEM_y:
+    
+    
+    Returns
+    ----------
+    fig:
+    
+    '''
 
     # -----Grab 2nd percentile snow elevation
     P = np.median(snow_elev) - iqr(snow_elev, rng=(2, 98))/2
@@ -1025,9 +1070,11 @@ def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_ele
     # -----Plot
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10,10), gridspec_kw={'height_ratios': [3, 1]})
     plt.rcParams.update({'font.size': 14, 'font.sans-serif': 'Arial'})
+    # define x and y limits
+    xmin, xmax = np.min(im_x)/1000, np.max(im_x)/1000
+    ymin, ymax = np.min(im_y)/1000, np.max(im_y)/1000
     # RGB image
-    ax1.imshow(np.dstack([r, g, b]),
-                extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
+    ax1.imshow(np.dstack([r, g, b]), extent=(xmin, xmax, ymin, ymax))
     ax1.set_xlabel("Easting [km]")
     ax1.set_ylabel("Northing [km]")
     # define colors for plotting
@@ -1035,9 +1082,6 @@ def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_ele
     color_ice = '#084081'
     color_rock = '#fdbb84'
     color_water = '#bdbdbd'
-    # define x and y limits
-    xmin, xmax = np.min(im_x)/1000, np.max(im_x)/1000
-    ymin, ymax = np.min(im_y)/1000, np.max(im_y)/1000
     # snow
     if any(im_classified.flatten()==1):
         ax2.imshow(np.where(im_classified == 1, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_snow, 'white']),
@@ -1098,7 +1142,7 @@ def plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_ele
     return fig
 
 # --------------------------------------------------
-def classify_image(im, im_fn, clf, feature_cols, out_path):
+def classify_image(im, im_fn, clf, feature_cols, crop_to_AOI, AOI, out_path):
     '''
     Function to classify input image using a pre-trained classifier
     
@@ -1111,9 +1155,13 @@ def classify_image(im, im_fn, clf, feature_cols, out_path):
     clf: sklearn.classifier
         previously trained SciKit Learn Classifier
     feature_cols: array of pandas.DataFrame columns, e.g. ['blue', 'green', 'red']
-        features used by classifier ()
+        features used by classifier
     out_path: str
         path to save classified images
+    crop_to_AOI: bool
+        whether to mask everywhere outside the AOI before classifying
+    AOI:
+    
     plot_output: bool
         whether to plot RGB and classified image
         
@@ -1169,6 +1217,18 @@ def classify_image(im, im_fn, clf, feature_cols, out_path):
         nir[nir==-9999] = np.nan
         # calculate NDSI with red and NIR bands
         ndsi = (r - nir) / (r + nir)
+        # mask the image using the AOI geometry
+        if crop_to_AOI:
+            mask = rio.features.geometry_mask(AOI.geometry,
+                b.shape,
+                im.transform,
+                all_touched=False,
+                invert=False)
+            b = np.where(mask==0, b, np.nan)
+            g = np.where(mask==0, g, np.nan)
+            r = np.where(mask==0, r, np.nan)
+            nir = np.where(mask==0, nir, np.nan)
+            ndsi = np.where(mask==0, ndsi, np.nan)
         
         # Find indices of real numbers (no NaNs allowed in classification)
         I_real = np.where((~np.isnan(b)) & (~np.isnan(g)) & (~np.isnan(r)) & (~np.isnan(nir)) & (~np.isnan(ndsi)))
@@ -1180,9 +1240,14 @@ def classify_image(im, im_fn, clf, feature_cols, out_path):
         df['red'] = r[I_real].flatten()
         df['NIR'] = nir[I_real].flatten()
         df['NDSI'] = ndsi[I_real].flatten()
+        df['moy'] = float(im_fn[4:6])
 
         # classify image
-        array_classified = clf.predict(df[feature_cols])
+        try:
+            array_classified = clf.predict(df[feature_cols])
+        except:
+            print("Error in classification... skipping image.")
+            return np.nan, np.nan, np.nan
         
         # reshape from flat array to original shape
         im_classified = np.zeros((np.shape(b)[0], np.shape(b)[1]))
@@ -1290,7 +1355,7 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, im, im_classified, im_dt, im_x, im_y
     
     # plot snow elevations histogram
     if plot_output:
-        fig = plot_im_classified_histograms(im, im_dt, im_x, im_y, im_classified, snow_elev, b, g, r, nir, DEM_x, DEM_y, DEM)
+        fig = plot_im_classified_histograms(im, im_x, im_y, im_dt, im_classified, snow_elev, b, g, r, nir, DEM, DEM_x, DEM_y)
         return im_elev_min, im_elev_max, snow_elev, fig
         
     return im_elev_min, im_elev_max, snow_elev
