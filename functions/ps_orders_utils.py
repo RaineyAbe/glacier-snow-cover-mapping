@@ -146,8 +146,8 @@ def poll_for_success(order_url, auth, num_loops=30):
         if state in end_states:
             break
         time.sleep(10)
-
-def download_results(results, overwrite=False):
+        
+def download_results(results, out_folder, overwrite=False):
     results_urls = [r['location'] for r in results]
     results_names = [r['name'] for r in results]
     print('{} items to download'.format(len(results_urls)))
@@ -246,7 +246,7 @@ def get_overlap_shapes_utm(items, aoi_shape):
     for i in items:
         yield _calculate_overlap(i)
 
-def filter_by_coverage(overlaps, dimensions, bounds):
+#def filter_by_coverage(overlaps, dimensions, bounds):
     
 
 def calculate_coverage(overlaps, dimensions, bounds):
