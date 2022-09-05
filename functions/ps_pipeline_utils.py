@@ -43,9 +43,10 @@ def plot_im_RGB_histogram(im_path, im_fn):
     
     '''
     
+    from osgeo import gdal
+    
     # load image
-    os.chdir(im_path)
-    im = rio.open(im_fn)
+    im = rio.open(im_path + im_fn)
     
     # load bands (blue, green, red, near infrared)
     b = im.read(1).astype(float)
@@ -97,19 +98,20 @@ def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
     Parameters
     ----------
     im_path: str
-    
-    im_fns: list of str
-    
+        path in directory to input images.
+    im_fns: list of strings
+        file names of images to be mosaicked, located in im_path.
     ext: str
-    
+        image file extensions, e.g. "SR_clip" or "SR_harmonized"
     out_path: str
-    
+        path in directory where image mosaics will be saved.
     AOI: geopandas.geodataframe.GeoDataFrame
-        Area of interest. If no real data exist within the AOI, function will exit. AOI must be in the same CRS as the images.
+        area of interest. If no real data exist within the AOI, function will exit. AOI must be in the same CRS as the images.
     plot_results: bool
     
     Returns
     ----------
+    N/A
     
     '''
     
@@ -307,15 +309,15 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
         Coordinate Reference System (EPSG code)
     polygon:  shapely.geometry.polygon.Polygon
             polygon, where the band standard deviation will be minimized
-    im: rasterio file
+    im: rasterio object
         input image
-    im_name: str =
+    im_name: str
         file name name of the input image
     im_path: str
         path in directory to the input image
     DEM_path: str
         path in directory to the DEM used to generate the hillshade model
-    hs_path: str =
+    hs_path: str
         path to save hillshade model
     out_path: str
         path to save corrected image file
@@ -580,32 +582,29 @@ def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM, DEM_x, DEM_y):
     
     Parameters
     ----------
-    AOI:
-        must be in same coordinate reference system (CRS) as the image
-    
-    im_fns:
-    
-    im_path:
-    
-    DEM:
-    
-    DEM_x:
-    
-    DEM_y:
+    AOI: geopandas.geodataframe.GeoDataFrame
+        Area of interest used for masking images. Must be in same coordinate reference system (CRS) as the image
+    im_path: str
+        path in directory to the input images
+    im_fns: list of str
+        image file names located in im_path.
+    DEM: numpy.ndarray
+        digital elevation model
+    DEM_x: numpy.ndarray
+        vector of x coordinates of the DEM
+    DEM_y: numpy array
+        vector of y coordinates of the DEM
     
     Returns
     ----------
-    polygon:
-    
+    polygon: shapely.geometry.Polygon
+        polygon(s) representing the top percentile of elevations in the AOI. Median value in the polygon will be used to adjust images
     b: numpy.ndarray
         surface reflectance of the blue image band
-    
     g: numpy.ndarray
         surface reflectance of the green image band
-    
     r: numpy.ndarray
         surface reflectance of the red image band
-    
     nir: numpy.ndarray
         surface reflectance of the near-infrared image band
     '''
@@ -981,7 +980,7 @@ def crop_images_to_AOI(im_path, im_fns, AOI):
     Parameters
     ----------
     im_path: str
-        path in directory to images
+        path in directory to input images
     im_fns: str array
         file names of images to crop
     AOI: geopandas.geodataframe.GeoDataFrame
@@ -1031,14 +1030,14 @@ def plot_im_classified_histograms(im, im_x, im_y, im_dt, im_classified, snow_ele
     
     Parameters
     ----------
-    im:
-    
-    im_x:
-    
-    im_y:
-    
-    im_dt:
-    
+    im: rasterio object
+        input image
+    im_x: numpy.array
+        x coordinates of input image
+    im_y: numpy.array
+        y coordinates of image
+    im_dt: numpy.datetime64
+        datetime of the image capture
     im_classified:
     
     snow_elev:
@@ -1060,7 +1059,8 @@ def plot_im_classified_histograms(im, im_x, im_y, im_dt, im_classified, snow_ele
     
     Returns
     ----------
-    fig:
+    fig: matplotlib.figure
+        resulting figure handle
     
     '''
 
@@ -1160,7 +1160,8 @@ def classify_image(im, im_fn, clf, feature_cols, crop_to_AOI, AOI, out_path):
         path to save classified images
     crop_to_AOI: bool
         whether to mask everywhere outside the AOI before classifying
-    AOI:
+    AOI: geopandas.geodataframe.GeoDataFrame
+        cropping region - everything outside the AOI will be masked if crop_to_AOI==True. AOI must be in the same CRS as the images.
     
     plot_output: bool
         whether to plot RGB and classified image
@@ -1274,12 +1275,14 @@ def classify_image(im, im_fn, clf, feature_cols, crop_to_AOI, AOI, out_path):
 # --------------------------------------------------
 def calculate_SCA(im, im_classified):
     '''Function to calculated total snow-covered area (SCA) from using an input image and a snow binary mask of the same resolution and grid.
-    INPUTS:
+    Parameters
+    ----------
         im: rasterio object
             input image
         im_classified: numpy array
             classified image array with the same shape as the input image bands. Classes: snow = 1, shadowed snow = 2, ice = 3, rock/debris = 4.
-    OUTPUTS:
+    Returns
+    ----------
         SCA: float
             snow-covered area in classified image [m^2]'''
 
@@ -1294,11 +1297,11 @@ def determine_snow_elevs(DEM, DEM_x, DEM_y, im, im_classified, im_dt, im_x, im_y
     '''Determine elevations of snow-covered pixels in the classified image.
     Parameters
     ----------
-    DEM: numpy array
+    DEM: numpy.array
         digital elevation model
-    DEM_x: numpy array
+    DEM_x: numpy.array
         vector of x coordinates of the DEM
-    DEM_y: numpy array
+    DEM_y: numpy.array
         vector of y coordinates of the DEM
     im: rasterio object
         input image used to classify snow
@@ -1400,3 +1403,15 @@ def reduce_memory_usage(df, verbose=True):
             )
         )
     return df
+    
+# --------------------------------------------------
+def convert_wgs_to_utm(lon: float, lat: float):
+    """Based on lat and lon, return best utm epsg-code"""
+    utm_band = str((math.floor((lon + 180) / 6 ) % 60) + 1)
+    if len(utm_band) == 1:
+        utm_band = '0'+utm_band
+    if lat >= 0:
+        epsg_code = '326' + utm_band
+        return epsg_code
+    epsg_code = '327' + utm_band
+    return epsg_code
