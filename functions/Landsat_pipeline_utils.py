@@ -67,7 +67,7 @@ def query_GEE_for_Landsat(AOI, im_path, im_fns):
         im = rio.open(im_path + im_fns)
     else:
         im = rio.open(im_path + im_fns[0])
-    L_col_UTM = L_col.map(function(im){ee.Image.reproject(im, str(im.crs))})
+#    L_col_UTM = L_col.map(function(im){ee.Image.reproject(im, str(im.crs))})
     AOI_UTM = AOI.to_crs(str(im.crs)[5:])
 
     # -----Convert DEM to numpy array, extract coordinates

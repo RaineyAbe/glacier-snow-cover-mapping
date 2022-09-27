@@ -12,7 +12,6 @@ import subprocess
 import os
 from shapely.geometry import Polygon, MultiPolygon, shape
 from scipy.interpolate import interp2d, griddata
-from scipy.stats import iqr
 import glob
 import ee
 import geopandas as gpd
@@ -578,7 +577,7 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
 # --------------------------------------------------
 def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM, DEM_x, DEM_y):
     '''
-    Function to generate a polygon of the top 70th percentile elevations within the defined Area of Interest (AOI).
+    Function to generate a polygon of the top 20th percentile elevations within the defined Area of Interest (AOI).
     
     Parameters
     ----------
@@ -656,7 +655,7 @@ def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM, DEM_x, DEM_y):
 
     # -----Mask DEM outside the AOI and the bottom percentile of elevations
     DEM_regrid_AOImasked = np.where(mask==0, DEM_regrid, np.nan)
-    DEM_P = np.nanmedian(DEM_regrid_AOImasked) + iqr(DEM_regrid_AOImasked, rng=(30,70), nan_policy='omit')/2
+    DEM_P = np.percentile(DEM, 80)
     DEM_regrid_AOImasked_Pmasked = np.where(DEM_regrid_AOImasked > DEM_P, DEM_regrid_AOImasked, np.nan)
     mask = np.where(~np.isnan(DEM_regrid_AOImasked_Pmasked), 1, 0)
 
@@ -899,28 +898,20 @@ def adjust_image_radiometry(im, im_fn, im_path, polygon, out_path, skip_clipped,
     return im_adj_fn
 
 # --------------------------------------------------
-def query_GEE_for_DEM(AOI, im_path, im_fns):
+def query_GEE_for_DEM(AOI):
     '''Query GEE for the ASTER Global DEM, clip to the AOI, and return as a numpy array.
     
     Parameters
     ----------
     AOI: geopandas.geodataframe.GeoDataFrame
         area of interest used for clipping the DEM
-    im_path: string
-        full path to the directory holding the images to be classified
-    im_fns: list of strings
-        file names of images to be classified, located in im_path. Used to extract the desired coordinate reference system of the DEM
     
     Returns
     ----------
-    DEM_np: numpy array
+    DEM_ds: xarray.Dataset
         elevations extracted within the AOI
-    DEM_x: numpy array
-        vector of x coordinates of the DEM
-    DEM_y: numpy array
-        vector of y coordinates of the DEM
     AOI_UTM: geopandas.geodataframe.GeoDataFrame
-        AOI reprojected to the coordinate reference system of the images
+        AOI reprojected to the appropriate UTM coordinate reference system
     '''
     
     # -----Reformat AOI for clipping DEM
@@ -936,41 +927,19 @@ def query_GEE_for_DEM(AOI, im_path, im_fns):
                             ])
 
     # -----Query GEE for DEM, clip to AOI
-    # Use ArcticDEM if it fully covers the AOI. Otherwise, use ASTER GDEM.
-#    if ee.Image("UMN/PGC/ArcticDEM/V3/2m_mosaic").geometry().contains(AOI_WGS_bb_ee).getInfo()==True:
-#        DEM = ee.Image("UMN/PGC/ArcticDEM/V3/2m_mosaic").clip(AOI_WGS_bb_ee)
-#        print("DEM = ArcticDEM")
-#    else:
-#        DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee)
-#        print("DEM = ASTER GDEM")
-    DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee)
-
-    # -----Grab UTM projection from images, reproject DEM and AOI
-    if type(im_fns)==str:
-        im = rio.open(im_path + im_fns)
-    else:
-        im = rio.open(im_path + im_fns[0])
-    DEM_UTM = ee.Image.reproject(DEM, str(im.crs))
-    AOI_UTM = AOI.to_crs(str(im.crs)[5:])
-
-    # -----Convert DEM to numpy array, extract coordinates
-    DEM_np = geemap.ee_to_numpy(DEM, ['elevation'], region=AOI_WGS_bb_ee, default_value=-9999).astype(float)
-    DEM_np[DEM_np==-9999] = np.nan # set no data value to NaN
-    DEM_x = np.linspace(AOI_UTM.geometry.bounds.minx[0], AOI_UTM.geometry.bounds.maxx[0], num=np.shape(DEM_np)[1])
-    DEM_y = np.linspace(AOI_UTM.geometry.bounds.miny[0], AOI_UTM.geometry.bounds.maxy[0], num=np.shape(DEM_np)[0])
-
-    # -----Plot to check for success
-    fig, ax = plt.subplots(figsize=(8,8))
-    plt.rcParams.update({'font.size':14, 'font.sans-serif':'Arial'})
-    DEM_im = plt.imshow(DEM_np, cmap='Greens_r',
-                        extent=(np.min(DEM_x), np.max(DEM_x), np.min(DEM_y), np.max(DEM_y)))
-    AOI_UTM.plot(ax=ax, facecolor='none', edgecolor='black', label='AOI')
-    ax.set_xlabel("Easting [m]")
-    ax.set_ylabel("Northing [m]")
-    fig.colorbar(DEM_im, ax=ax, shrink=0.5, label='Elevation [m]')
-    plt.show()
+    DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee).select('elevation')
     
-    return DEM_np, DEM_x, DEM_y, AOI_UTM
+    # -----Grab UTM projection from images, reproject DEM and AOI
+    AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
+                        AOI_WGS.geometry[0].centroid.xy[1][0]]
+    epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
+    AOI_UTM = AOI.to_crs(str(epsg_UTM))
+    
+    # -----Convert DEM to xarray.Dataset
+    DEM = DEM.set('system:time_start', 0) # set an arbitrary time
+    DEM_ds = DEM.wx.to_xarray(scale=30, crs='EPSG:'+str(epsg_UTM))
+    
+    return DEM_ds, AOI_UTM
     
 # --------------------------------------------------
 def crop_images_to_AOI(im_path, im_fns, AOI):
@@ -1065,7 +1034,7 @@ def plot_im_classified_histograms(im, im_x, im_y, im_dt, im_classified, snow_ele
     '''
 
     # -----Grab 2nd percentile snow elevation
-    P = np.median(snow_elev) - iqr(snow_elev, rng=(2, 98))/2
+    P = np.percentile(snow_elev, 2)
     
     # -----Plot
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10,10), gridspec_kw={'height_ratios': [3, 1]})
