@@ -7,6 +7,7 @@ import rasterio as rio
 from rasterio.mask import mask
 import numpy as np
 from pyproj import Proj, transform, Transformer
+import matplotlib
 import matplotlib.pyplot as plt
 import subprocess
 import os
@@ -19,7 +20,6 @@ import pandas as pd
 from scipy import stats
 import geemap
 from shapely.geometry import Polygon
-import matplotlib
 from osgeo import gdal
 
 # --------------------------------------------------
@@ -88,6 +88,120 @@ def plot_im_RGB_histogram(im_path, im_fn):
     plt.show()
     
     return fig
+
+# --------------------------------------------------
+def plot_im_classified_histogram_contour(im, im_classified, DEM, AOI, contour):
+    '''
+    Plot the classified image with snow elevations histogram and plot an elevation contour corresponding to the estimated snow line elevation.
+    
+    Parameters
+    ----------
+    im: xarray.DataSet
+        input image
+        
+    im: xarray.DataSet
+        single band, classified image
+        
+    DEM: xarray.DataSet
+        digital elevation model over the image area
+        
+    AOI: geopandas.geodataframe.GeoDataFrame
+        area of interest
+        
+    contour: float
+        elevation to be plotted as a contour on the figure
+    
+    Returns
+    ----------
+    fig: matplotlib.figure
+        resulting figure handle
+        
+    ax: matplotlib.Axes
+        axes handles on figure
+    '''
+    
+    # -----Determine snow-covered elevations
+    band, x, y = im_classified.indexes.values() # grab indices of image
+    DEM_interp = DEM.interp(x=x, y=y, method="nearest") # interpolate DEM to image coordinates
+    DEM_interp_masked = DEM_interp.where(im_classified<=2) # mask image where not classified as snow
+    snow_elev = DEM_interp_masked.elevation.data.flatten() # create array of snow elevations
+    snow_elev = np.sort(snow_elev[~np.isnan(snow_elev)]) # sort and remove NaNs
+    
+    # -----Determine bins to use in histogram
+    elev_min = np.fix(np.nanmin(DEM_interp.elevation.data.flatten())/10)*10
+    elev_max = np.round(np.nanmax(DEM_interp.elevation.data.flatten())/10)*10
+    bin_edges = np.linspace(elev_min, elev_max, num=int((elev_max-elev_min)/10))
+    
+    # -----Plot
+    fig, ax = plt.subplots(2, 2, figsize=(12,8), gridspec_kw={'height_ratios': [3, 1]})
+    ax = ax.flatten()
+    plt.rcParams.update({'font.size': 14, 'font.sans-serif': 'Arial'})
+    # define x and y limits
+    xmin, xmax = np.min(im.x.data), np.max(im.x.data)
+    ymin, ymax = np.min(im.y.data), np.max(im.y.data)
+    # define colors for plotting
+    color_snow = '#4eb3d3'
+    color_ice = '#084081'
+    color_rock = '#fdbb84'
+    color_water = '#bdbdbd'
+    # AOI
+    AOI.geometry.plot(facecolor='none', edgecolor='black', linewidth=1, ax=ax[0])
+    AOI.geometry.plot(facecolor='none', edgecolor='black', linewidth=1, ax=ax[1])
+    # RGB image
+    ax[0].imshow(np.dstack([im.data[2], im.data[1], im.data[0]]),
+               extent=(xmin, xmax, ymin, ymax))
+    ax[0].set_xlabel("Easting [m]")
+    ax[0].set_ylabel("Northing [m]")
+    # snow
+    if any(im_classified.data.flatten()==1):
+        ax[1].imshow(np.where(im_classified.data[0] == 1, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_snow, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax[1].scatter(0, 0, color=color_snow, s=50, label='snow') # plot dummy point for legend
+    if any(im_classified.data.flatten()==2):
+        ax[1].imshow(np.where(im_classified.data[0] == 2, 4, np.nan), cmap=matplotlib.colors.ListedColormap([color_snow, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+    # ice
+    if any(im_classified.data.flatten()==3):
+        ax[1].imshow(np.where(im_classified.data[0] == 3, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_ice, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax[1].scatter(0, 0, color=color_ice, s=50, label='ice') # plot dummy point for legend
+    # rock/debris
+    if any(im_classified.data.flatten()==4):
+        ax[1].imshow(np.where(im_classified.data[0] == 4, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_rock, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax[1].scatter(0, 0, color=color_rock, s=50, label='rock') # plot dummy point for legend
+    # water
+    if any(im_classified.data.flatten()==5):
+        ax[1].imshow(np.where(im_classified.data[0] == 5, 10, np.nan), cmap=matplotlib.colors.ListedColormap([color_water, 'white']),
+                    extent=(xmin, xmax, ymin, ymax))
+        ax[1].scatter(0, 0, color=color_water, s=50, label='water') # plot dummy point for legend
+    ax[1].legend(loc='best')
+    # elevation contour
+    ax[0].contour(DEM.x.data, DEM.y.data, DEM.elevation.data[0], [contour], colors=['#737373'])
+    ax[1].contour(DEM.x.data, DEM.y.data, DEM.elevation.data[0], [contour], colors=['#737373'])
+    ax[1].set_xlabel("Easting [km]")
+    ax[1].set_xlim(xmin, xmax)
+    ax[1].set_ylim(ymin, ymax)
+    # image bands histogram
+    h_b = ax[2].hist(im.data[0].flatten(), color='blue', histtype='step', linewidth=2, bins=100, label="blue")
+    h_g = ax[2].hist(im.data[1].flatten(), color='green', histtype='step', linewidth=2, bins=100, label="green")
+    h_r = ax[2].hist(im.data[2].flatten(), color='red', histtype='step', linewidth=2, bins=100, label="red")
+    h_nir = ax[2].hist(im.data[3].flatten(), color='brown', histtype='step', linewidth=2, bins=100, label="NIR")
+    ax[2].set_xlabel("Surface reflectance")
+    ax[2].set_ylabel("Pixel counts")
+    ax[2].legend(loc='best')
+    ax[2].grid()
+    # snow elevations histogram
+    ax[3].hist(snow_elev, bins=bin_edges, color=color_snow)
+    ax[3].set_xlabel("Elevation [m]")
+    ax[3].grid()
+    ymin, ymax = ax[3].get_ylim()[0], ax[3].get_ylim()[1]
+    # contour line
+    ax[3].plot((contour, contour), (ymin, ymax), color='#737373')
+    ax[3].set_ylim(ymin, ymax)
+    fig.tight_layout()
+    
+    return fig, ax
     
 # --------------------------------------------------
 def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
