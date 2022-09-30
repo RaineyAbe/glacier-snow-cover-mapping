@@ -924,7 +924,7 @@ def query_GEE_for_DEM(AOI):
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
-                            ])
+                            ]).buffer(1000)
 
     # -----Query GEE for DEM, clip to AOI
     DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee).select('elevation')
