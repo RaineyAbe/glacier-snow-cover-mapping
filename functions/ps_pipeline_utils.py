@@ -11,8 +11,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 import subprocess
 import os
-from shapely.geometry import Polygon, MultiPolygon, shape, Point
+from shapely.geometry import Polygon, MultiPolygon, shape, Point, LineString
 from scipy.interpolate import interp2d, griddata
+from skimage.measure import find_contours
 import glob
 import ee
 import geopandas as gpd
@@ -166,34 +167,22 @@ def plot_im_classified_histogram_contour(im, im_classified, DEM, AOI, contour):
     color_rock = '#fdbb84'
     color_water = '#bdbdbd'
     color_contour = '#f768a1'
+    # create colormap
+    colors = [color_snow, color_snow, color_ice, color_rock, color_water]
+    cmp = matplotlib.colors.ListedColormap(colors)
     # RGB image
     ax[0].imshow(np.dstack([im.data[2], im.data[1], im.data[0]]),
                extent=(xmin, xmax, ymin, ymax))
     ax[0].set_xlabel("Easting [km]")
     ax[0].set_ylabel("Northing [km]")
-    # snow
-    if any(im_classified.data.flatten()==1):
-        ax[1].imshow(np.where(im_classified.data == 1, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_snow, 'white']),
-                    extent=(xmin, xmax, ymin, ymax))
-        ax[1].scatter(0, 0, color=color_snow, s=50, label='snow') # plot dummy point for legend
-    if any(im_classified.data.flatten()==2):
-        ax[1].imshow(np.where(im_classified.data == 2, 4, np.nan), cmap=matplotlib.colors.ListedColormap([color_snow, 'white']),
-                    extent=(xmin, xmax, ymin, ymax))
-    # ice
-    if any(im_classified.data.flatten()==3):
-        ax[1].imshow(np.where(im_classified.data == 3, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_ice, 'white']),
-                    extent=(xmin, xmax, ymin, ymax))
-        ax[1].scatter(0, 0, color=color_ice, s=50, label='ice') # plot dummy point for legend
-    # rock/debris
-    if any(im_classified.data.flatten()==4):
-        ax[1].imshow(np.where(im_classified.data == 4, 1, np.nan), cmap=matplotlib.colors.ListedColormap([color_rock, 'white']),
-                    extent=(xmin, xmax, ymin, ymax))
-        ax[1].scatter(0, 0, color=color_rock, s=50, label='rock') # plot dummy point for legend
-    # water
-    if any(im_classified.data.flatten()==5):
-        ax[1].imshow(np.where(im_classified.data == 5, 10, np.nan), cmap=matplotlib.colors.ListedColormap([color_water, 'white']),
-                    extent=(xmin, xmax, ymin, ymax))
-        ax[1].scatter(0, 0, color=color_water, s=50, label='water') # plot dummy point for legend
+    # classified image
+    ax[1].imshow(im_classified.data, cmap=cmp, vmin=1, vmax=5,
+                 extent=(xmin, xmax, ymin, ymax))
+    # plot dummy points for legend
+    ax[1].scatter(0, 0, color=color_snow, s=50, label='snow')
+    ax[1].scatter(0, 0, color=color_ice, s=50, label='ice')
+    ax[1].scatter(0, 0, color=color_rock, s=50, label='rock')
+    ax[1].scatter(0, 0, color=color_water, s=50, label='water')
     ax[1].set_xlabel('Easting [km]')
     # AOI
     ax[0].plot([x/1e3 for x in AOI.exterior[0].coords.xy[0]], [y/1e3 for y in AOI.exterior[0].coords.xy[1]], '-k', linewidth=1, label='AOI')
@@ -1426,26 +1415,27 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     im = im.where(im!=-9999) # remove no data values
     if np.nanmean(im) > 1e3:
         im = im / 10000 # account for surface reflectance scalar multiplier
+    date = im_fn[0:8] # grab image capture date from file name
 
     # open classified image
     im_classified = rxr.open_rasterio(im_classified_path + im_classified_fn) # open image as xarray.DataArray
     im_classified = im_classified.where(im_classified!=-9999) # remove no data values
-
+    
     # mask the DEM using the AOI
     mask_AOI = rio.features.geometry_mask(AOI.geometry,
                                       out_shape=(len(DEM.y), len(DEM.x)),
                                       transform=DEM.transform,
                                       invert=True)
-    # convert maskto xarray DataArray
+    # convert mask to xarray DataArray
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
     # mask DEM values outside the AOI
-    DEM_AOI = DEM.where(mask == True)
+    DEM_AOI = DEM.where(mask_AOI == True)
 
     # interpolate DEM to the image coordinates
     im_classified = im_classified.squeeze(drop=True) # remove unecessary dimensions
     x, y = im_classified.indexes.values() # grab indices of image
     DEM_AOI_interp = DEM_AOI.interp(x=x, y=y, method="nearest") # interpolate DEM to image coordinates
-
+    
     # determine snow covered elevations
     DEM_AOI_interp_snow = DEM_AOI_interp.where(im_classified<=2) # mask pixels not classified as snow
     snow_est_elev = DEM_AOI_interp_snow.elevation.data.flatten() # create array of snow-covered pixel elevations
@@ -1468,47 +1458,84 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     im_classified_adj = xr.where(DEM_AOI_interp.elevation > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
     im_classified_adj = im_classified_adj.squeeze(drop=True) # drop unecessary dimensions
         
-    # vectorize snow-covered area
-    snow_est = xr.where(im_classified_adj <= 2, 1, 0).data # create binary snow mask
-    snow_est_polygons = snow_mask_to_polygons(snow_est, im_classified_fn, 50e3)
-        
-    # extract snow line (sl) from snow polygons
-    sl_est = [] # initialize list of snow line points
-    # loop through snow polygons
-    for poly in snow_est_polygons:
-        snow_est_polygon_points =  poly.exterior.coords.xy
-        # loop through points in polygon
-        for x, y in list(zip(snow_est_polygon_points[0], snow_est_polygon_points[1])):
-            # generate shapely Point from polygon coordinate
-            point = Point(x, y)
+    # create binary snow matrix
+    im_binary = xr.where(im_classified_adj <=2, 1, 0).data
+
+    # Find contours at a constant value of 0.5 (between 0 and 1)
+    contours = find_contours(im_binary, 0.5)
+
+    # convert contour points to image coordinates
+    contours_coords = []
+    for contour in contours:
+        ix = np.round(contour[:,1]).astype(int)
+        iy = np.round(contour[:,0]).astype(int)
+        coords = (im.isel(x=ix, y=iy).x.data, # image x coordinates
+                  im.isel(x=ix, y=iy).y.data) # image y coordinates
+        # zip points together
+        xy = list(zip([x for x in coords[0]],
+                      [y for y in coords[1]]))
+        contours_coords = contours_coords + [xy]
+
+    # extract snow lines (sl) from contours
+    sl_est = [] # initialize list of snow lines
+    # loop through contours
+    for c in contours_coords:
+        # create array of points
+        c_points =  [Point(x,y) for x,y in c]
+        # loop through points
+        line_points = [] # initialize list of points to use in snow line
+        for point in c_points:
             # calculate distance from the point to the AOI boundary
             distance = AOI.boundary[0].distance(point)
-            # do not include point if it is within 100 m of the AOI exterior
+            # only include points 200 m from the AOI boundary
             if distance >= 100:
-                sl_est = sl_est + [(point.coords.xy[0][0], point.coords.xy[1][0])]
-        
-    # filter snow line if points cover a wide range of elevations
-    # if np.std(sl_est_elev) > 50:
-    #     I = np.array(np.where((sl_est_elev - np.min(sl_est_elev)) < 150), dtype=int)
-    #     sl_est_elev = sl_est_elev[I[0]]
-    #     sl_est = [sl_est[i] for i in I[0]]
-        
-    # extract elevations at each estimated snow line point
-    sl_est_elev = np.array([DEM.sel(time=DEM.time.data[0], x=x, y=y, method='nearest').elevation.data
-                            for x, y in sl_est])
-    # calculate median snow line elevation
-    sl_est_elev_median = np.nanmedian(sl_est_elev)
+                line_points = line_points + [point]
+        if line_points: # if list of line points is not empty
+            if len(line_points) > 1: # must have at least two points to create a LineString
+                line = LineString([(p.xy[0][0], p.xy[1][0]) for p in line_points])
+                sl_est = sl_est + [line]
 
+    # filter lines by length
+    sl_est_filt = []
+    for line in sl_est:
+        if line.length > 1000:
+            sl_est_filt = sl_est_filt + [line]
+        
+    # compile all line coordinates into arrays of x- and y-coordinates
+    xpts, ypts = [], []
+    for line in sl_est_filt:
+        xpts = xpts + [x for x in line.coords.xy[0]]
+        ypts = ypts + [y for y in line.coords.xy[1]]
+    xpts, ypts = np.array(xpts).flatten(), np.array(ypts).flatten()
+        
+    # interpolate elevation at snow line points
+    sl_est_elev = [DEM.sel(x=x, y=y, method='nearest').elevation.data[0]
+                   for x, y in list(zip(xpts, ypts))]
+
+    # adjust snow line points to account for disparate elevations
+    DEM_AOI_interp_snow_adj = DEM_AOI_interp.where(im_classified_adj<=2) # mask pixels not classified as snow
+    snow_est_elev_adj = DEM_AOI_interp_snow_adj.elevation.data.flatten() # create array of snow-covered pixel elevations
+    H_snow_est_elev_adj = np.histogram(snow_est_elev_adj, bins=bin_edges)[0]
+    H_snow_est_elev_norm_adj = H_snow_est_elev_adj / H_DEM
+    # elevation where all points above are >= 50% snow-covered
+    el = bin_centers[np.where(H_snow_est_elev_norm_adj<=0.5)[0][-1]]
+    # inidices of snow line points within 100 m of this elevation
+    I = np.where(el - sl_est_elev < 100)[0]
+    # adjust snow line using indices
+    xpts, ypts = [xpts[i] for i in I], [ypts[i] for i in I]
+    sl_est_elev_adj = [sl_est_elev[i] for i in I]
+        
     # plot results
     contour = None
     fig, ax, sl_points_AOI = plot_im_classified_histogram_contour(im, im_classified_adj, DEM, AOI, contour)
-    # plot estimated snow line elevation
-    ax[0].plot([x[0]/1e3 for x in sl_est],
-               [y[1]/1e3 for y in sl_est],
-               '.m', label='sl$_{estimated}$', markersize=2)
-    ax[1].plot([x[0]/1e3 for x in sl_est],
-               [y[1]/1e3 for y in sl_est],
-               '.m', label='_nolegend_', markersize=2)
+    # plot estimated snow line coordinates
+    for line in sl_est_filt:
+        ax[0].plot([x/1e3 for x in xpts],
+                   [y/1e3 for y in ypts],
+                   '.', color='#f768a1', label='_nolegend_', markersize=1)
+        ax[1].plot([x/1e3 for x in xpts],
+                   [y/1e3 for y in ypts],
+                   '.', color='#f768a1', label='_nolegend_', markersize=1)
     # add legends
     ax[0].legend(loc='best')
     ax[1].legend(loc='best')
@@ -1516,7 +1543,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
         ax[3].set_title('Contour = ' + str(np.round(contour,1)) + ' m')
     fig.suptitle(date)
 
-    return fig, ax, sl_est, sl_est_elev
+    return fig, ax, sl_est_filt, sl_est_elev_adj
 
 # --------------------------------------------------
 def calculate_SCA(im, im_classified):
