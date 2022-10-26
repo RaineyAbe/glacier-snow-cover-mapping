@@ -22,42 +22,8 @@
 # -------------------------
 # ------  0. Setup  -------
 # -------------------------
-
-# Define paths in directory, image file extensions, and desired settings.
-
-##### MODIFY HERE #####
-# -----Path to snow-cover-mapping
-base_path = '/Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/'
-# base_path = '/home/raberle/scratch/snow_cover_mapping/snow-cover-mapping'
-
-# -----Paths in directory
-site_name = 'Wolverine'
-# [local directory]
-# path to images
-im_path = base_path + '../study-sites/' + site_name + '/imagery/PlanetScope/2016-2021/'
-# path to AOI including the name of the shapefile
-AOI_fn = base_path + '../../GIS_data/RGI_outlines/' + site_name + '_RGI.shp'
-# AOI_fn = base_path + '../RGI_outlines/' + site_name + '_RGI.shp'
-# path for output images
-out_path = im_path + '../'
-# path for output figures
-figures_out_path = im_path + '../../../figures/'
-
-# -----Determine steps to run
-steps_to_run = [4] # full pipeline = [1, 2, 3, 4]
-
-# -----Image file extensions (for mosaicing)
-ext = 'SR_clip'
-
-# -----Determine settings
-skip_clipped = False # = True to skip images where bands appear "clipped", i.e. max blue SR < 0.8
-crop_to_AOI = True # = True to crop images to AOI before classifying SCA
-save_outputs = True # = True to save output images to file
-save_figures = True # = True to save output figures to file
-
-#######################
-
 # -----Import packages
+import argparse
 import os
 import numpy as np
 import glob
@@ -74,17 +40,66 @@ import pickle
 from PIL import Image as PIL_Image
 from IPython.display import Image as IPy_Image
 
+# -----Parse arguments
+def getparser():
+    parser = argparse.ArgumentParser(description='Wrapper script to run full snow classification workflow')
+    parser.add_argument('-base_path', default=None, type=str, help='path to snow-cover-mapping')
+    parser.add_argument('-site_name', default=None, type=str, help='name of study site')
+    parser.add_argument('-im_path', default=None, type=str, help='path to raw images')
+    parser.add_argument('-im_ext', default=None, type=str, help='raw image extensions (e.g., "SR_clip") for mosaicing')
+    parser.add_argument('-AOI_path', default=None, type=str, help='path to AOI shapefile')
+    parser.add_argument('-AOI_fn', default=None, type=str, help='file name of AOI shapefile')
+    parser.add_argument('-out_path', default=None, type=str, help='path to output folder to save results in')
+    parser.add_argument('-steps_to_run', nargs='*', help='specify steps of workflow to run (e.g., [1, 2, 3, 4, 5])')
+    parser.add_argument('-skip_clipped', default=False, type=bool, help='whether to skip images that appear clipped')
+    parser.add_argument('-crop_to_AOI', default=True, type=bool, help='whether to crop images to the AOI before classifying')
+    parser.add_argument('-save_outputs', default=True, type=bool, help='whether to save output image files and data tables to file')
+    parser.add_argument('-save_figures', default=True, type=bool, help='whether to save output figures to file')
+    return parser
+parser = getparser()
+args = parser.parse_args()
+base_path = args.base_path
+site_name = args.site_name
+im_path = args.im_path
+im_ext = args.im_ext
+AOI_path = args.AOI_path
+AOI_fn = args.AOI_fn
+out_path = args.out_path
+steps_to_run = np.array(args.steps_to_run).astype(int)
+skip_clipped = args.skip_clipped
+crop_to_AOI = args.crop_to_AOI
+save_outputs = args.save_outputs
+save_figures = args.save_figures
+
+# -----Check for input files
+# input image files
+if 1 in steps_to_run:
+    im_list = glob.glob(os.path.join(im_path,'*.tif'))+glob.glob(os.path.join(im_path,'*.tiff'))
+    if len(im_list)<1:
+        print('< 1 images detected, exiting')
+        sys.exit()
+# AOI path
+if not os.path.exists(AOI_path):
+    print('Path to AOI could not be located, exiting')
+    sys.exit()
+# AOI file
+AOI_fn_full = glob.glob(os.path.join(AOI_path, AOI_fn))
+if len(AOI_fn_full)<1:
+    print('AOI shapefile could not be located in directory, exiting')
+    sys.exit()
+
 # -----Add path to functions
 sys.path.insert(1, base_path+'functions/')
 import ps_pipeline_utils as f
 
 # -----Load AOI as geopandas.GeoDataFrame
-AOI = gpd.read_file(AOI_fn)
+AOI = gpd.read_file(AOI_path + AOI_fn)
 
 # -----Set paths for output files
 im_mosaic_path = out_path + 'mosaics/'
 im_adj_path = out_path + 'adjusted-filtered/'
 im_classified_path = out_path + 'classified/'
+figures_out_path = out_path + '../../figures/'
 
 # -----Authenticate & initialize GEE
 try:
@@ -95,8 +110,6 @@ except:
 
 # -----Query GEE for DEM
 DEM, AOI_UTM = f.query_GEE_for_DEM(AOI)
-plot_results = False
-
 
 # ----------------------------------
 # ---  1. Mosaic images by date  ---
@@ -113,6 +126,7 @@ if 1 in steps_to_run:
     im_fns.sort() # sort chronologically
 
     # ----Mosaic images by date
+    plot_results=False
     f.mosaic_ims_by_date(im_path, im_fns, ext, im_mosaic_path, AOI, plot_results)
 
 
@@ -139,6 +153,7 @@ if 2 in steps_to_run:
         # load image
         print(im_mosaic_fn)
         # adjust radiometry
+        plot_results=False
         im_adj_fn = f.adjust_image_radiometry(im_mosaic_fn, im_mosaic_path, polygon, im_adj_path, skip_clipped, plot_results)
         print('----------')
         print(' ')
@@ -171,6 +186,8 @@ if 3 in steps_to_run:
     df = pd.DataFrame(columns=('site_name', 'datetime', 'im_elev_min', 'im_elev_max', 'snow_elev_min', 'snow_elev_max',
                                'snow_elev_median', 'snow_elev_10th_perc', 'snow_elev_90th_perc'))
     for im_adj_fn in im_adj_fns:
+
+        print(im_adj_fn[0:8]+'...')
 
         # extract datetime from image name
         im_dt = np.datetime64(im_adj_fn[0:4] + '-' + im_adj_fn[4:6] + '-' + im_adj_fn[6:8]
@@ -208,6 +225,7 @@ if 4 in steps_to_run:
 
         # extract datetime from image file name
         im_date = im_classified_fn[0:11]
+        print(im_date+'...')
         im_dt = np.datetime64(im_classified_fn[0:4] + '-' + im_classified_fn[4:6] + '-' + im_classified_fn[6:8]
                               + 'T' + im_classified_fn[9:11] + ':00:00')
 
@@ -216,25 +234,28 @@ if 4 in steps_to_run:
         im_adj_fn = glob.glob(im_date + '*.tif')[0]
 
         # estimate snow line
-        fig, ax, sl_est, sl_est_elev = f.delineate_snow_line(im_adj_fn, im_adj_path, im_classified_fn, im_classified_path, AOI_UTM, DEM)
-        plt.show()
+        try:
+            fig, ax, sl_est, sl_est_elev = f.delineate_snow_line(im_adj_fn, im_adj_path, im_classified_fn, im_classified_path, AOI_UTM, DEM)
 
-        # calculate median snow line elevation
-        sl_est_elev_median = np.nanmedian(sl_est_elev)
+            # calculate median snow line elevation
+            sl_est_elev_median = np.nanmedian(sl_est_elev)
 
-        # save figure
-        if save_figures:
-            fig.savefig(figures_out_path+'PS_' + im_date + '_SCA.png', dpi=300, facecolor='white', edgecolor='none')
-            print('figure saved to file')
+            # save figure
+            if save_figures:
+                fig.savefig(figures_out_path+'PS_' + im_date + '_SCA.png', dpi=300, facecolor='white', edgecolor='none')
+                print('figure saved to file')
 
-        # compile results in df
-        result_df = pd.DataFrame({'study_site': site_name,
-                                  'datetime': im_dt,
-                                  'snowlines_coords': [sl_est],
-                                  'snowlines_elevs': [sl_est_elev],
-                                  'snowlines_elevs_median': sl_est_elev_median})
-        # concatenate to results_df
-        results_df = pd.concat([results_df, result_df])
+            # compile results in df
+            result_df = pd.DataFrame({'study_site': site_name,
+                                      'datetime': im_dt,
+                                      'snowlines_coords': [sl_est],
+                                      'snowlines_elevs': [sl_est_elev],
+                                      'snowlines_elevs_median': sl_est_elev_median})
+            # concatenate to results_df
+            results_df = pd.concat([results_df, result_df])
+
+        except:
+            print('error... skipping')
 
     # -----Plot median snow line elevations
     fig2, ax2 = plt.subplots(figsize=(10,6))
@@ -266,14 +287,11 @@ if 4 in steps_to_run:
     frame_one.save(figures_out_path + gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
     print('GIF saved to file:' + figures_out_path + gif_fn)
 
-    # -----Display .gif
-#    IPy_Image(filename = figures_out_path + gif_fn)
-
     # -----Clean up: delete individual figure files
     files = os.listdir(figures_out_path)
     for file in files:
         if ('PS_' in file) and ('_SCA.png' in file):
             os.remove(os.path.join(figures_out_path, file))
     print('Individual figure files deleted.')
-    
-print('DONE! :)')
+
+print('DONE!')

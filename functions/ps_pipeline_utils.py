@@ -768,9 +768,10 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
     return im_corrected_name
 
 # --------------------------------------------------
-def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM):
+def create_AOI_elev_polys(AOI, im_path, im_fns, DEM):
     '''
-    Function to generate a polygon of the top 20th percentile elevations within the defined Area of Interest (AOI).
+    Function to generate a polygon of the top 20th and bottom percentile elevations
+    within the defined Area of Interest (AOI).
     
     Parameters
     ----------
@@ -785,8 +786,9 @@ def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM):
     
     Returns
     ----------
-    polygon: shapely.geometry.Polygon
-        polygon(s) representing the top percentile of elevations in the AOI. Median value in the polygon will be used to adjust images
+    polygons: list
+        list of shapely.geometry.Polygons representing the top and bottom 20th percentiles of elevations in the AOI.
+        Median value in each polygon will be used to adjust images, depending on the difference.
     im: xarray.DataArray
         image
     '''
@@ -810,6 +812,8 @@ def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM):
 
     # -----Open image as xarray.DataArray
     im_rxr = rxr.open_rasterio(im_fn)
+    # set no data values to NaN
+    im_rxr = im_rxr.where(im_rxr!=-9999)
     # account for image scalar
     if np.nanmean(im_rxr.data[2]) > 1e3:
         im_rxr = im_rxr / 10000
@@ -828,22 +832,33 @@ def create_top_elev_AOI_poly(AOI, im_path, im_fns, DEM):
     band, x, y = im_rxr.indexes.values() # grab indices of image
     DEM_AOI_interp = DEM_AOI.interp(x=x, y=y, method="nearest") # interpolate DEM to image coordinates
 
-    # -----Mask the bottom percentile of elevations in the DEM
-    DEM_P = np.nanpercentile(DEM_AOI_interp.elevation.data.flatten(), 80)
-    mask = xr.where(DEM_AOI_interp > DEM_P, 1, 0).elevation.data[0]
-
-    # -----Convert mask to polygon
+    # -----Top elevations polygon
+    # mask the bottom percentile of elevations in the DEM
+    DEM_bottom_P = np.nanpercentile(DEM_AOI_interp.elevation.data.flatten(), 80)
+    mask = xr.where(DEM_AOI_interp > DEM_bottom_P, 1, 0).elevation.data[0]
+    # convert mask to polygon
     # adapted from: https://rocreguant.com/convert-a-mask-into-a-polygon-for-images-using-shapely-and-rasterio/1786/
-    polygons = []
+    polygons_top = []
     for s, value in rio.features.shapes(mask.astype(np.int16), mask=(mask >0), transform=im.transform):
-        polygons.append(shape(s))
-    polygons = MultiPolygon(polygons)
+        polygons_top.append(shape(s))
+    polygons_top = MultiPolygon(polygons_top)
+    
+    # -----Bottom elevations polygon
+    # mask the top 80th percentile of elevations in the DEM
+    DEM_bottom_P = np.nanpercentile(DEM_AOI_interp.elevation.data.flatten(), 20)
+    mask = xr.where(DEM_AOI_interp < DEM_bottom_P, 1, 0).elevation.data[0]
+    # convert mask to polygon
+    # adapted from: https://rocreguant.com/convert-a-mask-into-a-polygon-for-images-using-shapely-and-rasterio/1786/
+    polygons_bottom = []
+    for s, value in rio.features.shapes(mask.astype(np.int16), mask=(mask >0), transform=im.transform):
+        polygons_bottom.append(shape(s))
+    polygons_bottom = MultiPolygon(polygons_bottom)
         
-    return polygons, im_fn, im_rxr
+    return polygons_top, polygons_bottom, im_fn, im_rxr
     
     
 # --------------------------------------------------
-def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plot_results):
+def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_path, skip_clipped, plot_results):
     '''
     Adjust PlanetScope image band radiometry using the band values in a defined snow-covered area (SCA) and the expected surface reflectance of snow.
     
@@ -853,8 +868,10 @@ def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plo
         file name of the input image
     im_path: str
         path in directory to the input image
-    polygon: shapely.geometry.polygon.Polygon
-        polygon used to adjust band values
+    polygon_top: shapely.geometry.polygon.Polygon
+        polygon of the top 20th percentile of elevations in the AOI
+    polygon_bottom: shapely.geometry.polygon.Polygon
+        polygon of the bottom 20th percentile of elevations in the AOI
     out_path: str
         path in directory where adjusted image file will be saved
     skip_clipped: bool
@@ -866,6 +883,8 @@ def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plo
     ----------
     im_adj_name: str
         file name of the adjusted image saved to file
+    im_adj_method: str
+        method used to adjust image ('SNOW' = using the predicted surface reflectance of snow, 'ICE' = using the predicted surface reflectance of ice)
     '''
     
     # -----Create output directory if it does not exist
@@ -880,18 +899,24 @@ def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plo
         print('adjusted image already exists... loading from file.')
         
         # load adjusted image from file
-        im_adj = rxr.open_rasterio(out_path+im_adj_fn)
+        im_adj = rxr.open_rasterio(out_path + im_adj_fn)
+        # replace no data values with NaN
+        im_adj = im_adj.where(im_adj!=-9999)
         # account for image scalar multiplier if necessary
         if np.nanmean(im_adj.data[2]) > 1e3:
             im_adj = im_adj / 10000
             
-        return im_adj_fn
+        im_adj_method = 'N/A'
+            
+        return im_adj_fn, im_adj_method
 
     else:
             
         # -----Load input image
-        im_rxr = rxr.open_rasterio(im_fn)
-        im_rio = rio.open(im_fn)
+        im_rxr = rxr.open_rasterio(im_path + im_fn)
+        im_rio = rio.open(im_path + im_fn)
+        # set no data values to NaN
+        im_rxr = im_rxr.where(im_rxr!=-9999)
         # account for image scalar multiplier if necessary
         im_scalar = 10000
         if np.nanmean(im_rxr.data[2]) > 1e3:
@@ -910,78 +935,128 @@ def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plo
                 return im_adj_fn
 
         # -----Return if image does not contain polygon
-        # mask the image using polygon geometry
-        mask = rio.features.geometry_mask([polygon],
+        # mask the image using polygon geometries
+        mask_top = rio.features.geometry_mask([polygon_top],
+                                       np.shape(b),
+                                       im_rio.transform,
+                                       all_touched=False,
+                                       invert=False)
+        mask_bottom = rio.features.geometry_mask([polygon_bottom],
                                        np.shape(b),
                                        im_rio.transform,
                                        all_touched=False,
                                        invert=False)
         # skip if image does not contain polygon
-        if (0 not in mask.flatten()):
-            print('image does not contain polygon... skipping.')
-            im_adj_fn = 'N/A'
-            return im_adj_fn
+        if (0 not in mask_top.flatten()) or (0 not in mask_bottom.flatten()):
+            print('image does not contain polygons... skipping.')
+            im_adj_fn, im_adj_method = 'N/A', 'N/A'
+            return im_adj_fn, im_adj_method
             
         # -----Return if no real values exist within the SCA
         if (np.nanmean(b)==0) or (np.isnan(np.nanmean(b))):
             print('image does not contain any real values within the polygon... skipping.')
-            im_adj_name = 'N/A'
-            return im_adj_name
+            im_adj_fn, im_adj_method = 'N/A', 'N/A'
+            return im_adj_fn, im_adj_method
             
-        # -----Define desired SR values at the bright area and darkest point for each band
-        # bright area
-        bright_b_adj = 0.94
-        bright_g_adj = 0.95
-        bright_r_adj = 0.94
-        bright_nir_adj = 0.78
-        # dark point
-        dark_adj = 0.0
+        # -----Filter image points outside the top polygon
+        b_top_polygon = b[mask_top==0]
+        g_top_polygon = g[mask_top==0]
+        r_top_polygon = r[mask_top==0]
+        nir_top_polygon = nir[mask_top==0]
         
-        # -----Filter image points outside the polygon
-        b_polygon = b[mask==0]
-        g_polygon = g[mask==0]
-        r_polygon = r[mask==0]
-        nir_polygon = nir[mask==0]
-                                  
-        # -----Adjust SR using bright and dark points
+        # -----Filter image points outside the bottom polygon
+        b_bottom_polygon = b[mask_bottom==0]
+        g_bottom_polygon = g[mask_bottom==0]
+        r_bottom_polygon = r[mask_bottom==0]
+        nir_bottom_polygon = nir[mask_bottom==0]
+        
+        # -----Calculate median value for each polygon and the mean difference between the two
+        SR_top_median = np.mean([np.nanmedian(b_top_polygon), np.nanmedian(g_top_polygon),
+                                   np.nanmedian(r_top_polygon), np.nanmedian(nir_top_polygon)])
+        SR_bottom_median = np.mean([np.nanmedian(b_bottom_polygon), np.nanmedian(g_bottom_polygon),
+                                   np.nanmedian(r_bottom_polygon), np.nanmedian(nir_bottom_polygon)])
+        difference = np.mean([np.nanmedian(b_top_polygon) - np.nanmedian(b_bottom_polygon),
+                                np.nanmedian(g_top_polygon) - np.nanmedian(g_bottom_polygon),
+                                np.nanmedian(r_top_polygon) - np.nanmedian(r_bottom_polygon),
+                                np.nanmedian(nir_top_polygon) - np.nanmedian(nir_bottom_polygon)])
+        if (SR_top_median < 0.45) and (difference < 0.1):
+            im_adj_method = 'ICE'
+        else:
+            im_adj_method = 'SNOW'
+    
+        # -----Define the desired bright and dark surface reflectance values
+        #       at the top elevations based on the method determined above
+        if im_adj_method=='SNOW':
+            
+            # define desired SR values at the bright area and darkest point for each band
+            # bright area
+            bright_b_adj = 0.94
+            bright_g_adj = 0.95
+            bright_r_adj = 0.94
+            bright_nir_adj = 0.78
+            # dark point
+            dark_adj = 0.0
+        
+        
+        elif im_adj_method=='ICE':
+                    
+            # define desired SR values at the bright area and darkest point for each band
+            # bright area
+            bright_b_adj = 0.58
+            bright_g_adj = 0.59
+            bright_r_adj = 0.57
+            bright_nir_adj = 0.40
+            # dark point
+            dark_adj = 0.0
+        
+        # -----Adjust surface reflectance values
         # band_adjusted = band*A - B
         # A = (bright_adjusted - dark_adjusted) / (bright - dark)
         # B = (dark*bright_adjusted - bright*dark_adjusted) / (bright - dark)
         # blue band
-        bright_b = np.nanmedian(b_polygon) # SR at bright point
+        bright_b = np.nanmedian(b_top_polygon) # SR at bright point
         dark_b = np.nanmin(b) # SR at darkest point
         A = (bright_b_adj - dark_adj) / (bright_b - dark_b)
         B = (dark_b*bright_b_adj - bright_b*dark_adj) / (bright_b - dark_b)
         b_adj = (b * A) - B
         b_adj = np.where(b==0, np.nan, b_adj) # replace no data values with nan
         # green band
-        bright_g = np.nanmedian(g_polygon) # SR at bright point
+        bright_g = np.nanmedian(g_top_polygon) # SR at bright point
         dark_g = np.nanmin(g) # SR at darkest point
         A = (bright_g_adj - dark_adj) / (bright_g - dark_g)
         B = (dark_g*bright_g_adj - bright_g*dark_adj) / (bright_g - dark_g)
         g_adj = (g * A) - B
         g_adj = np.where(g==0, np.nan, g_adj) # replace no data values with nan
         # red band
-        bright_r = np.nanmedian(r_polygon) # SR at bright point
+        bright_r = np.nanmedian(r_top_polygon) # SR at bright point
         dark_r = np.nanmin(r) # SR at darkest point
         A = (bright_r_adj - dark_adj) / (bright_r - dark_r)
         B = (dark_r*bright_r_adj - bright_r*dark_adj) / (bright_r - dark_r)
         r_adj = (r * A) - B
         r_adj = np.where(r==0, np.nan, r_adj) # replace no data values with nan
         # nir band
-        bright_nir = np.nanmedian(nir_polygon) # SR at bright point
+        bright_nir = np.nanmedian(nir_top_polygon) # SR at bright point
         dark_nir = np.nanmin(nir) # SR at darkest point
         A = (bright_nir_adj - dark_adj) / (bright_nir - dark_nir)
         B = (dark_nir*bright_nir_adj - bright_nir*dark_adj) / (bright_nir - dark_nir)
         nir_adj = (nir * A) - B
         nir_adj = np.where(nir==0, np.nan, nir_adj) # replace no data values with nan
-
+        
         # -----Save adjusted raster image to file
+        # reformat bands for saving as int data type
+        b_save = b_adj * im_scalar
+        b_save[np.isnan(b)] = -9999
+        g_save = g_adj * im_scalar
+        g_save[np.isnan(g)] = -9999
+        r_save = r_adj * im_scalar
+        r_save[np.isnan(r)] = -9999
+        nir_save = nir_adj * im_scalar
+        nir_save[np.isnan(nir)] = -9999
         # copy metadata
         out_meta = im_rio.meta.copy()
         out_meta.update({'driver': 'GTiff',
-                         'width': b_adj.shape[1],
-                         'height': b_adj.shape[0],
+                         'width': b_save.shape[1],
+                         'height': b_save.shape[0],
                          'count': 4,
                          'dtype': 'uint16',
                          'crs': im_rio.crs,
@@ -989,10 +1064,10 @@ def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plo
         # write to file
         with rio.open(out_path+im_adj_fn, mode='w',**out_meta) as dst:
             # write bands - multiply bands by im_scalar and convert datatype to uint64 to decrease file size
-            dst.write_band(1, b_adj * im_scalar)
-            dst.write_band(2, g_adj * im_scalar)
-            dst.write_band(3, r_adj * im_scalar)
-            dst.write_band(4, nir_adj * im_scalar)
+            dst.write_band(1, b_save)
+            dst.write_band(2, g_save)
+            dst.write_band(3, r_save)
+            dst.write_band(4, nir_save)
         print('adjusted image saved to file: ' + im_adj_fn)
 
     # -----Plot RGB images and band histograms for the original and adjusted image
@@ -1001,30 +1076,31 @@ def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plo
         plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
         # original image
         im_original = ax1.imshow(np.dstack([im_rxr.data[2], im_rxr.data[1], im_rxr.data[0]]),
-                    extent=(np.min(im_rxr.x)/1000, np.max(im_rxr.x)/1000, np.min(im_rxr.y)/1000, np.max(im_rxr.y)/1000))
+                    extent=(np.min(im_rxr.x.data)/1e3, np.max(im_rxr.x.data)/1e3, np.min(im_rxr.y.data)/1e3, np.max(im_rxr.y.data)/1e3))
         count=0
-        for geom in polygon.geoms:
-            xs, ys = geom.exterior.xy
-            if count==0:
-                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='polygon(s)')
-            else:
-                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='_nolegend_')
-            count+=1
+#        for geom in polygon_top.geoms:
+#            xs, ys = geom.exterior.xy
+#            if count==0:
+#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='c', label='top polygon(s)')
+#            else:
+#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='c', label='_nolegend_')
+#            count+=1
+#        for geom in polygon_bottom.geoms:
+#            xs, ys = geom.exterior.xy
+#            if count==0:
+#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='bottom polygon(s)')
+#            else:
+#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='_nolegend_')
+#            count+=1
         ax1.legend()
         ax1.set_xlabel('Easting [km]')
         ax1.set_ylabel('Northing [km]')
-        ax1.set_title('Original image')
+        ax1.set_title('Raw image')
         # adjusted image
         ax2.imshow(np.dstack([r_adj, g_adj, b_adj]),
-            extent=(np.min(im_rxr.x)/1000, np.max(im_rxr.x)/1000, np.min(im_rxr.y)/1000, np.max(im_rxr.y)/1000))
+            extent=(np.min(im_rxr.x.data)/1e3, np.max(im_rxr.x.data)/1e3,
+                    np.min(im_rxr.y.data)/1e3, np.max(im_rxr.y.data)/1e3))
         count=0
-        for geom in polygon.geoms:
-            xs, ys = geom.exterior.xy
-            if count==0:
-                ax2.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='polygon(s)')
-            else:
-                ax2.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='_nolegend_')
-            count+=1
         ax2.set_xlabel('Easting [km]')
         ax2.set_title('Adjusted image')
         # band histograms
@@ -1045,7 +1121,7 @@ def adjust_image_radiometry(im_fn, im_path, polygon, out_path, skip_clipped, plo
         fig.tight_layout()
         plt.show()
             
-    return im_adj_fn
+    return im_adj_fn, im_adj_method
 
 # --------------------------------------------------
 def query_GEE_for_DEM(AOI):
