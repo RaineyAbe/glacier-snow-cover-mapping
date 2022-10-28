@@ -31,6 +31,8 @@ import subprocess
 from matplotlib.patches import Rectangle
 from matplotlib import pyplot as plt, dates
 import rasterio as rio
+import rioxarray as rxr
+import xarray as xr
 from scipy import stats
 import pandas as pd
 import geopandas as gpd
@@ -46,9 +48,10 @@ def getparser():
     parser.add_argument('-base_path', default=None, type=str, help='path to snow-cover-mapping')
     parser.add_argument('-site_name', default=None, type=str, help='name of study site')
     parser.add_argument('-im_path', default=None, type=str, help='path to raw images')
-    parser.add_argument('-im_ext', default=None, type=str, help='raw image extensions (e.g., "SR_clip") for mosaicing')
     parser.add_argument('-AOI_path', default=None, type=str, help='path to AOI shapefile')
     parser.add_argument('-AOI_fn', default=None, type=str, help='file name of AOI shapefile')
+    parser.add_argument('-DEM_path', default=None, type=str, help='path to DEM')
+    parser.add_argument('-DEM_fn', default=None, type=str, help='file name of DEM (tif or tiff)')
     parser.add_argument('-out_path', default=None, type=str, help='path to output folder to save results in')
     parser.add_argument('-steps_to_run', nargs='*', help='specify steps of workflow to run (e.g., [1, 2, 3, 4, 5])')
     parser.add_argument('-skip_clipped', default=False, type=bool, help='whether to skip images that appear clipped')
@@ -61,9 +64,10 @@ args = parser.parse_args()
 base_path = args.base_path
 site_name = args.site_name
 im_path = args.im_path
-im_ext = args.im_ext
 AOI_path = args.AOI_path
 AOI_fn = args.AOI_fn
+DEM_path = args.DEM_path
+DEM_fn = args.DEM_fn
 out_path = args.out_path
 steps_to_run = np.array(args.steps_to_run).astype(int)
 skip_clipped = args.skip_clipped
@@ -94,22 +98,23 @@ import ps_pipeline_utils as f
 
 # -----Load AOI as geopandas.GeoDataFrame
 AOI = gpd.read_file(AOI_path + AOI_fn)
+# convert to UTM coordinates
+AOI_WGS = AOI.to_crs(4326)
+AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
+                    AOI_WGS.geometry[0].centroid.xy[1][0]]
+epsg_UTM = f.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
+AOI_UTM = AOI.to_crs(str(epsg_UTM))
+
+# -----Load DEM as xarray DataSet
+DEM = xr.open_dataset(DEM_path + DEM_fn)
+DEM = DEM.rename({'band_data':'elevation'}) # rename band_data to elevation
+DEM_rio = rio.open(DEM_path + DEM_fn) # also open with rasterio to access the transform
 
 # -----Set paths for output files
 im_mosaic_path = out_path + 'mosaics/'
 im_adj_path = out_path + 'adjusted-filtered/'
 im_classified_path = out_path + 'classified/'
 figures_out_path = out_path + '../../figures/'
-
-# -----Authenticate & initialize GEE
-try:
-    ee.Initialize()
-except:
-    ee.Authenticate()
-    ee.Initialize()
-
-# -----Query GEE for DEM
-DEM, AOI_UTM = f.query_GEE_for_DEM(AOI)
 
 # ----------------------------------
 # ---  1. Mosaic images by date  ---
@@ -122,30 +127,31 @@ if 1 in steps_to_run:
 
     # -----Load file names with proper extension
     os.chdir(im_path)
-    im_fns = glob.glob('*' + ext + '*')
+    im_fns = glob.glob('*SR_clip.tif') + glob.glob('*SR_harmonized_clip.tif')
     im_fns.sort() # sort chronologically
 
     # ----Mosaic images by date
     plot_results=False
-    f.mosaic_ims_by_date(im_path, im_fns, ext, im_mosaic_path, AOI, plot_results)
+    f.mosaic_ims_by_date(im_path, im_fns, im_mosaic_path, AOI, plot_results)
 
 
 # ------------------------------------
 # ---  2. Adjust image radiometry  ---
 # ------------------------------------
+
+# -----Read image mosaic file names
+os.chdir(im_mosaic_path)
+im_mosaic_fns = glob.glob('*.tif')
+im_mosaic_fns.sort()
+
+# -----Create a polygon(s) of the top 20th percentile elevations within the AOI
+polygon_top, polygon_bottom, im_mosaic_fn, im_mosaic_rxr = f.create_AOI_elev_polys(AOI_UTM, im_mosaic_path, im_mosaic_fns, DEM, DEM_rio)
+    
 if 2 in steps_to_run:
 
     print('--------------------------')
     print('2. Adjusting images')
     print('--------------------------')
-
-    # -----Read image mosaic file names
-    os.chdir(im_mosaic_path)
-    im_mosaic_fns = glob.glob('*.tif')
-    im_mosaic_fns.sort()
-
-    # -----Create a polygon(s) of the top 20th percentile elevations within the AOI
-    polygon, im_fn, im = f.create_top_elev_AOI_poly(AOI_UTM, im_mosaic_path, im_mosaic_fns, DEM)
 
     # -----Loop through images
     for im_mosaic_fn in im_mosaic_fns:
@@ -154,10 +160,9 @@ if 2 in steps_to_run:
         print(im_mosaic_fn)
         # adjust radiometry
         plot_results=False
-        im_adj_fn = f.adjust_image_radiometry(im_mosaic_fn, im_mosaic_path, polygon, im_adj_path, skip_clipped, plot_results)
+        im_adj_fn = f.adjust_image_radiometry(im_mosaic_fn, im_mosaic_path, polygon_top, polygon_bottom, im_adj_path, skip_clipped, plot_results)
         print('----------')
         print(' ')
-
 
 # ----------------------------
 # ---  3. Classify images  ---

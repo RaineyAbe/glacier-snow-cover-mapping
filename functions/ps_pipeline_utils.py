@@ -283,7 +283,7 @@ def snow_mask_to_polygons(mask, im_fn, min_area):
     return polygons_list_filtered
     
 # --------------------------------------------------
-def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
+def mosaic_ims_by_date(im_path, im_fns, out_path, AOI, plot_results):
     '''
     Mosaic PlanetScope 4-band images captured within the same hour using gdal_merge.py. Skips images which contain no real data in the AOI. Adapted from code developed by Jukes Liu.
     
@@ -293,8 +293,6 @@ def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
         path in directory to input images.
     im_fns: list of strings
         file names of images to be mosaicked, located in im_path.
-    ext: str
-        image file extensions, e.g. "SR_clip" or "SR_harmonized"
     out_path: str
         path in directory where image mosaics will be saved.
     AOI: geopandas.geodataframe.GeoDataFrame
@@ -322,70 +320,72 @@ def mosaic_ims_by_date(im_path, im_fns, ext, out_path, AOI, plot_results):
     
     # -----Loop through unique scenes
     for scene in unique_scenes:
+    
+        try:
         
-        # define the out path with correct extension
-        if ext == 'DN_udm.tif':
-            out_im_fn = os.path.join(scene + "_DN_mask.tif")
-        elif ext == 'udm2.tif':
-            out_im_fn = os.path.join(scene + "_mask.tif")
-        else:
+            # define the out path with correct extension
             out_im_fn = os.path.join(scene + ".tif")
-        print(out_im_fn)
-            
-        # check if image mosaic already exists in directory
-        if os.path.exists(out_path + out_im_fn)==True:
-            print("image mosaic already exists... skipping.")
-            print(" ")
-            
-            # plot output file
-            if plot_results:
-                fig = plot_im_RGB_histogram(out_path, out_im_fn)
-            
-        else:
-            
-            file_paths = [] # files from the same hour to mosaic together
-            for im_fn in im_fns: # check all files
-                if (scene in im_fn): # if they match the scene date
-                    im = rio.open(im_path + im_fn) # open image
-                    AOI_UTM = AOI.to_crs(str(im.crs)[5:]) # reproject AOI to image CRS
-                    # mask the image using AOI geometry
-                    b = im.read(1).astype(float) # blue band
-                    mask = rio.features.geometry_mask(AOI_UTM.geometry,
-                                                   b.shape,
-                                                   im.transform,
-                                                   all_touched=False,
-                                                   invert=False)
-                    # check if real data values exist within AOI
-                    b_AOI = b[mask==0] # grab blue band values within AOI
-                    # set no-data values to NaN
-                    b_AOI[b_AOI==-9999] = np.nan
-                    b_AOI[b_AOI==0] = np.nan
-                    if (len(b_AOI[~np.isnan(b_AOI)]) > 0):
-                        file_paths.append(im_path + im_fn) # add the path to the file
-                        
-            # check if any filepaths were added
-            if len(file_paths) > 0:
-
-                # construct the gdal_merge command
-                cmd = 'gdal_merge.py -v '
-
-                # add input files to command
-                for file_path in file_paths:
-                    cmd += file_path+' '
-
-                cmd += '-o ' + out_path + out_im_fn
-
-                # run the command
-                p = subprocess.run(cmd, shell=True, capture_output=True)
-                print(p)
-            
+            print(out_im_fn)
+                
+            # check if image mosaic already exists in directory
+            if os.path.exists(out_path + out_im_fn)==True:
+                print("image mosaic already exists... skipping.")
+                print(" ")
+                
                 # plot output file
                 if plot_results:
                     fig = plot_im_RGB_histogram(out_path, out_im_fn)
+            
             else:
+        
+                file_paths = [] # files from the same hour to mosaic together
+                for im_fn in im_fns: # check all files
+                    if (scene in im_fn): # if they match the scene date
+                        im = rio.open(im_path + im_fn) # open image
+                        AOI_UTM = AOI.to_crs(str(im.crs)[5:]) # reproject AOI to image CRS
+                        # mask the image using AOI geometry
+                        b = im.read(1).astype(float) # blue band
+                        mask = rio.features.geometry_mask(AOI_UTM.geometry,
+                                                       b.shape,
+                                                       im.transform,
+                                                       all_touched=False,
+                                                       invert=False)
+                        # check if real data values exist within AOI
+                        b_AOI = b[mask==0] # grab blue band values within AOI
+                        # set no-data values to NaN
+                        b_AOI[b_AOI==-9999] = np.nan
+                        b_AOI[b_AOI==0] = np.nan
+                        if (len(b_AOI[~np.isnan(b_AOI)]) > 0):
+                            file_paths.append(im_path + im_fn) # add the path to the file
+                        
+                # check if any filepaths were added
+                if len(file_paths) > 0:
+
+                    # construct the gdal_merge command
+                    cmd = 'gdal_merge.py -v '
+
+                    # add input files to command
+                    for file_path in file_paths:
+                        cmd += file_path+' '
+
+                    cmd += '-o ' + out_path + out_im_fn
+
+                    # run the command
+                    p = subprocess.run(cmd, shell=True, capture_output=True)
+                    print(p)
                 
-                print("No real data values within the AOI for images on this date... skipping.")
-                print(" ")
+                    # plot output file
+                    if plot_results:
+                        fig = plot_im_RGB_histogram(out_path, out_im_fn)
+                else:
+                
+                    print("No real data values within the AOI for images on this date... skipping.")
+                    print(" ")
+                    
+        except:
+            print("Error occured during mosaic, skipping...")
+            continue
+            
 
 # --------------------------------------------------
 def into_range(x, range_min, range_max):
@@ -768,7 +768,7 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
     return im_corrected_name
 
 # --------------------------------------------------
-def create_AOI_elev_polys(AOI, im_path, im_fns, DEM):
+def create_AOI_elev_polys(AOI, im_path, im_fns, DEM, DEM_rio):
     '''
     Function to generate a polygon of the top 20th and bottom percentile elevations
     within the defined Area of Interest (AOI).
@@ -783,6 +783,8 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM):
         image file names located in im_path.
     DEM: xarray.DataSet
         digital elevation model
+    DEM_rio: rio.DatasetReader
+        digital elevation model opened using rasterio (to access the transform for masking)
     
     Returns
     ----------
@@ -821,7 +823,7 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM):
     # -----Mask the DEM outside the AOI exterior
     mask_AOI = rio.features.geometry_mask(AOI.geometry,
                                   out_shape=(len(DEM.y), len(DEM.x)),
-                                  transform=DEM.transform,
+                                  transform=DEM_rio.transform,
                                   invert=True)
     # convert maskto xarray DataArray
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
@@ -958,13 +960,13 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
             im_adj_fn, im_adj_method = 'N/A', 'N/A'
             return im_adj_fn, im_adj_method
             
-        # -----Filter image points outside the top polygon
+        # -----Grab band values in the top elevations polygon
         b_top_polygon = b[mask_top==0]
         g_top_polygon = g[mask_top==0]
         r_top_polygon = r[mask_top==0]
         nir_top_polygon = nir[mask_top==0]
         
-        # -----Filter image points outside the bottom polygon
+        # -----Grab band values in the bottom elevations polygon
         b_bottom_polygon = b[mask_bottom==0]
         g_bottom_polygon = g[mask_bottom==0]
         r_bottom_polygon = r[mask_bottom==0]
@@ -1155,7 +1157,7 @@ def query_GEE_for_DEM(AOI):
     # -----Query GEE for DEM, clip to AOI
     DEM = ee.Image("NASA/ASTER_GED/AG100_003").clip(AOI_WGS_bb_ee).select('elevation')
     
-    # -----Grab UTM projection from images, reproject DEM and AOI
+    # -----Grab optimal UTM zone, reproject AOI
     AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
                         AOI_WGS.geometry[0].centroid.xy[1][0]]
     epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
