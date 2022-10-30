@@ -95,7 +95,7 @@ def plot_im_RGB_histogram(im_path, im_fn):
     return fig
 
 # --------------------------------------------------
-def plot_im_classified_histogram_contour(im, im_classified, DEM, AOI, contour):
+def plot_im_classified_histogram_contour(im, im_classified, DEM, DEM_rio, AOI, contour):
     '''
     Plot the classified image with snow elevations histogram and plot an elevation contour corresponding to the estimated snow line elevation.
     
@@ -109,6 +109,9 @@ def plot_im_classified_histogram_contour(im, im_classified, DEM, AOI, contour):
         
     DEM: xarray.DataSet
         digital elevation model over the image area
+        
+    DEM_rio: rasterio.DatasetReader
+        digital elevation model opened using rasterio (to access the transform for masking)
         
     AOI: geopandas.geodataframe.GeoDataFrame
         area of interest
@@ -131,7 +134,7 @@ def plot_im_classified_histogram_contour(im, im_classified, DEM, AOI, contour):
     # mask the DEM using the AOI
     mask = rio.features.geometry_mask(AOI.geometry,
                                       out_shape=(len(DEM.y), len(DEM.x)),
-                                      transform=DEM.transform,
+                                      transform=DEM_rio.transform,
                                       invert=True)
     mask = xr.DataArray(mask , dims=("y", "x"))
     # mask DEM values outside the AOI
@@ -783,7 +786,7 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM, DEM_rio):
         image file names located in im_path.
     DEM: xarray.DataSet
         digital elevation model
-    DEM_rio: rio.DatasetReader
+    DEM_rio: rasterio.DatasetReader
         digital elevation model opened using rasterio (to access the transform for masking)
     
     Returns
@@ -1404,24 +1407,31 @@ def classify_image(im_fn, im_path, clf, feature_cols, crop_to_AOI, AOI, out_path
         # -----Calculate NDSI using red and NIR bands
         ndsi = (r - nir) / (r + nir)
         
-        # -----Mask the image using the AOI geometry
+        # -----Mask image pixels outside the AOI
         if crop_to_AOI:
-            # create pandas.GeoDataFrame with geometry = AOI exterior
-            d = {'geometry': [Polygon(AOI.exterior[0])]}
-            gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(AOI.crs.to_epsg()))
-            mask = rio.features.geometry_mask(gdf.geometry,
-                b.shape,
-                im_rio.transform,
-                all_touched=False,
-                invert=False)
-            b = np.where(mask==0, b, np.nan)
-            g = np.where(mask==0, g, np.nan)
-            r = np.where(mask==0, r, np.nan)
-            nir = np.where(mask==0, nir, np.nan)
-            ndsi = np.where(mask==0, ndsi, np.nan)
+            mask = np.zeros(np.shape(im.data[0]))
+            if len(AOI.geometry[0].geoms) > 1: # loop through geoms if AOI = MultiPolygon
+                for poly in AOI.geometry[0].geoms:
+                    d = {'geometry': [Polygon(poly.exterior)]}
+                    gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(AOI.crs.to_epsg()))
+                    m = rio.features.geometry_mask(gdf.geometry,
+                                                   np.shape(im.data[0]),
+                                                   im_rio.transform,
+                                                   all_touched=False,
+                                                   invert=False)
+                    mask[m==0] = 1
+            else:
+                d = {'geometry': [Polygon(AOI.geometry[0].exterior)]}
+                gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(AOI.crs.to_epsg()))
+                m = rio.features.geometry_mask(gdf.geometry,
+                                               b.shape,
+                                               im_rio.transform,
+                                               all_touched=False,
+                                               invert=False)
+                mask[m==0] = 1
         
         # Find indices of real numbers (no NaNs allowed in classification)
-        I_real = np.where((~np.isnan(b)) & (~np.isnan(g)) & (~np.isnan(r)) & (~np.isnan(nir)) & (~np.isnan(ndsi)))
+        I_real = np.ravel(np.where(mask==1))
         
         # save in Pandas dataframe
         df = pd.DataFrame()
@@ -1462,7 +1472,7 @@ def classify_image(im_fn, im_path, clf, feature_cols, crop_to_AOI, AOI, out_path
     return im_classified_fn, im
 
 # --------------------------------------------------
-def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AOI, DEM):
+def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AOI, DEM, DEM_rio):
     '''
     Parameters
     ----------
@@ -1516,7 +1526,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     # create AOI mask
     mask_AOI = rio.features.geometry_mask(AOI.geometry,
                                       out_shape=(len(DEM.y), len(DEM.x)),
-                                      transform=DEM.transform,
+                                      transform=DEM_rio.transform,
                                       invert=True)
     # convert mask to xarray DataArray
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
@@ -1547,11 +1557,14 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     
     # -----Make all pixels at elevations >75% snow coverage snow
     # determine elevation with > 75% snow coverage
-    elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
-    # set all pixels above the elev_75_snow to snow (1)
-    im_classified_adj = xr.where(DEM_AOI_interp.elevation > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
-    im_classified_adj = im_classified_adj.squeeze(drop=True) # drop unecessary dimensions
-    
+    if len(np.where(H_snow_est_elev_norm > 0.75)) > 1:
+        elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
+        # set all pixels above the elev_75_snow to snow (1)
+        im_classified_adj = xr.where(DEM_AOI_interp.elevation > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
+        im_classified_adj = im_classified_adj.squeeze(drop=True) # drop unecessary dimensions
+    else:
+        im_classified_adj = im_classified.squeeze(drop=True)
+            
     # -----Determine snow line
     # generate and filter binary snow matrix
     # create binary snow matrix
@@ -1573,7 +1586,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
         xy = list(zip([x for x in coords[0]],
                       [y for y in coords[1]]))
         contours_coords = contours_coords + [xy]
-    # create snow-covered polygons
+    # create snow-free polygons
     c_polys = []
     for c in contours_coords:
         c_points = [Point(x,y) for x,y in c]
@@ -1614,68 +1627,64 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
                 if line.length > min_sl_length:
                     sl_est = sl_est + [line]
                     
-    # split lines with points more than 100 m apart and filter by length
-#    sl_est_split = [] # initialize list of filtered snow lines
-#    min_sl_length = 200
-#    for line in sl_est:
-#        # extract line x and y coordinates
-#        coords = list(line.coords)
-#        # initialize binary array of where to split
-#        split_list = np.zeros(len(line.coords))
-#        # loop through points
-#        for i in np.arange(1,len(coords)):
-#            if i!=0:
-#                point = Point(coords[i])
-#                # calculate distance between point and previous point
-#                distance = point.distance(Point(coords[i-1]))
-#                # set split to 1 if distance is greater than 100 m
-#                if distance > 100:
-#                    split_list[i] = 1
-#        if np.any(split_list==1):
-#            # initialize binary list of where to split the line
-#            isplit = np.ravel(np.where(split_list==1))
-#            for i in np.arange(0,len(isplit)):
-#                if i==0:
-#                    if len(coords[:isplit[i]+1]) > 1: # must have at least 2 points in LineString
-#                        line_split = LineString(coords[:isplit[i]+1])
-#                    else:
-#                        line_split = None
-#                else:
-#                    if len(coords[isplit[i-1]+1:isplit[i]]) > 1: # must have at least 2 points in LineString
-#                        line_split = LineString(coords[isplit[i-1]+1:isplit[i]+1])
-#                    else:
-#                        line_split = None
-#                # concatenate split line to sl_est_filt if greater than min_sl_length
-#                if line_split is not None:
-#                    if line_split.length > min_sl_length:
-#                        sl_est_split = sl_est_split + [line_split]
-#        else:
-#            # concatenate line to sl_est_filt if greater than min_sl_length
-#            if line.length > min_sl_length:
-#                sl_est_split = sl_est_split + [line]
+    # -----Check if any snow lines were found
+    if sl_est:
+        # split lines with points more than 100 m apart and filter by length
+        sl_est = sl_est[0]
+        max_dist = 100 # m
+        first_point = Point(sl_est.coords.xy[0][0], sl_est.coords.xy[1][0])
+        points = [Point(sl_est.coords.xy[0][i], sl_est.coords.xy[1][i])
+                  for i in np.arange(0,len(sl_est.coords.xy[0]))]
+        isplit = [0] # point indices where to split the line
+        for i, p in enumerate(points):
+            if i!=0:
+                dist = p.distance(points[i-1])
+                if dist > max_dist:
+                    isplit.append(i)
+        isplit.append(len(points)) # add ending point to complete the last line
+        sl_est_split = [] # initialize split lines
+        # loop through split indices
+        if isplit:
+            for i, p in enumerate(isplit[:-1]):
+                if isplit[i+1]-isplit[i] > 1: # must have at least two points to make a line
+                    line = LineString(points[isplit[i]:isplit[i+1]])
+                    if line.length > min_sl_length:
+                        sl_est_split = sl_est_split + [line]
+        else:
+            sl_est_split = [sl_est]
                         
-    # -----Interpolate elevations at snow line coordinates
-    # compile all line coordinates into arrays of x- and y-coordinates
-    xpts, ypts = [], []
-    for line in sl_est:
-        xpts = xpts + [x for x in line.coords.xy[0]]
-        ypts = ypts + [y for y in line.coords.xy[1]]
-    xpts, ypts = np.array(xpts).flatten(), np.array(ypts).flatten()
-    # interpolate elevation at snow line points
-    sl_est_elev = [DEM.sel(x=x, y=y, method='nearest').elevation.data[0]
-                   for x, y in list(zip(xpts, ypts))]
+        # interpolate elevations at snow line coordinates
+        # compile all line coordinates into arrays of x- and y-coordinates
+        xpts, ypts = [], []
+        for line in sl_est_split:
+            xpts = xpts + [x for x in line.coords.xy[0]]
+            ypts = ypts + [y for y in line.coords.xy[1]]
+        xpts, ypts = np.array(xpts).flatten(), np.array(ypts).flatten()
+        # interpolate elevation at snow line points
+        sl_est_elev = [DEM.sel(x=x, y=y, method='nearest').elevation.data[0]
+                       for x, y in list(zip(xpts, ypts))]
     
+    else:
+        sl_est_split = None
+        sl_est_elev = np.nan
+        
     # -----Plot results
     contour = None
-    fig, ax, sl_points_AOI = plot_im_classified_histogram_contour(im, im_classified_adj, DEM, AOI, contour)
+    fig, ax, sl_points_AOI = plot_im_classified_histogram_contour(im, im_classified_adj, DEM, DEM_rio, AOI, contour)
     # plot estimated snow line coordinates
-    for line in sl_est:
-        ax[0].plot([x/1e3 for x in xpts],
-                   [y/1e3 for y in ypts],
-                   '.', color='#f768a1', label='sl$_{estimated}$', markersize=1)
-        ax[1].plot([x/1e3 for x in xpts],
-                   [y/1e3 for y in ypts],
-                   '.', color='#f768a1', label='_nolegend_', markersize=1)
+    if sl_est_split!=None:
+        for i, line  in enumerate(sl_est_split):
+            if i==0:
+                ax[0].plot([x/1e3 for x in line.coords.xy[0]],
+                           [y/1e3 for y in line.coords.xy[1]],
+                           '-', color='#f768a1', label='sl$_{estimated}$')
+            else:
+                ax[0].plot([x/1e3 for x in line.coords.xy[0]],
+                           [y/1e3 for y in line.coords.xy[1]],
+                           '-', color='#f768a1', label='_nolegend_')
+            ax[1].plot([x/1e3 for x in line.coords.xy[0]],
+                       [y/1e3 for y in line.coords.xy[1]],
+                       '-', color='#f768a1', label='_nolegend_')
     # add legends
     ax[0].legend(loc='best')
     ax[1].legend(loc='best')
@@ -1683,7 +1692,8 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
         ax[3].set_title('Contour = ' + str(np.round(contour,1)) + ' m')
     fig.suptitle(date)
 
-    return fig, ax, sl_est, sl_est_elev
+    return fig, ax, sl_est_split, sl_est_elev
+
 
 # --------------------------------------------------
 def calculate_SCA(im, im_classified):
