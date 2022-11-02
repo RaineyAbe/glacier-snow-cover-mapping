@@ -11,22 +11,17 @@
 conda activate planet-snow
 
 # define paths and file names
-site_name="Wolverine"
-#base_path="/home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/"
-#AOI_path="$base_path../RGI_outlines/"
-
-base_path="/Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/"
+site_name="LemonCreek"
+base_path="/home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/"
 im_path="$base_path../study-sites/$site_name/imagery/PlanetScope/2016-2021/"
 AOI_path="$im_path../../../glacier_outlines/"
-AOI_fn="Wolverine_USGS_glacier_outline_2020.shp"
-DEM_path="$base_path../study-sites/$site_name/DEMs/Wolverine_20200502_DEM/"
-DEM_fn="Wolverine_20200502_DEM_filled.tif"
+AOI_fn="${site_name}_USGS_glacier_outline*.shp"
+DEM_path="$base_path../study-sites/$site_name/DEMs/"
+DEM_fn="${site_name}*_DEM_filled.tif"
 out_path="$im_path../"
 
 # run your code
-#python /home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/scripts/PlanetScope_snow_classification_pipeline.py \
-
-python /Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/scripts/PlanetScope_snow_classification_pipeline.py \
+python /home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/scripts/PlanetScope_snow_classification_pipeline.py \
 -base_path $base_path \
 -site_name $site_name \
 -im_path $im_path \
@@ -35,4 +30,4 @@ python /Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/sc
 -DEM_path $DEM_path \
 -DEM_fn $DEM_fn \
 -out_path $out_path \
--steps_to_run 4
+-steps_to_run 1 2 3 4 5
