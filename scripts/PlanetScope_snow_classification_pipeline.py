@@ -131,8 +131,8 @@ im_mask_path = os.path.join(out_path, 'masked/')
 im_mosaic_path = os.path.join(out_path, 'mosaics/')
 im_adj_path = os.path.join(out_path, 'adjusted/')
 im_classified_path = os.path.join(out_path, 'classified/')
-figures_out_path = os.path.join(out_path, '../../figures/')
 snowlines_path = os.path.join(out_path, 'snowlines/')
+figures_out_path = os.path.join(out_path, '../../figures/')
 
 
 # ---------------------------------
@@ -284,8 +284,6 @@ if 5 in steps_to_run:
         if os.path.exists(snowlines_path + snowline_fn):
             print("snowline already exists in file, continuing...")
             continue
-        else:
-            print("snowline not found")
             
         # load adjusted image from the same date
         os.chdir(im_adj_path)
@@ -299,7 +297,7 @@ if 5 in steps_to_run:
         sl_est_elev_median = np.nanmedian(sl_est_elev)
 
         # save figure
-        fig.savefig(os.path.join(figures_out_path, 'PS_' + im_date + '_SCA.png'), dpi=300, facecolor='white', edgecolor='none')
+        fig.savefig(figures_out_path + 'PS_' + im_date + '_SCA.png', dpi=300, facecolor='white', edgecolor='none')
         print('figure saved to file')
 
         # compile result in df
@@ -311,7 +309,7 @@ if 5 in steps_to_run:
         
         # save snowline to file
         if save_outputs:
-            result_df.to_pickle(os.path.join(snowlines_path, snowline_fn))
+            result_df.to_pickle(snowlines_path + snowline_fn)
             print('results data table saved to file')
 
 #        except:
@@ -322,7 +320,8 @@ if 5 in steps_to_run:
 
     # -----Compile result data tables
     # grab file names of all snow line data frames
-    df_fns = glob.glob(snowlines_path + '*.pkl')
+    os.chdir(snowlines_path)
+    df_fns = glob.glob('*.pkl')
     # initialize full data frame
     results_df = pd.DataFrame(columns=['study_site', 'datetime', 'snowlines_coords', 'snowlines_elevs', 'snowlines_elevs_median'])
     # loop through data tables
@@ -339,7 +338,7 @@ if 5 in steps_to_run:
     sl_end_date = df_dates[-1]
     # save full snow lines data frame to file
     results_df_fn = site_name + '_' + sl_start_date + '_' + sl_end_date + '_snowlines.pkl'
-    results_df.to_pickle(os.path.join(snowlines_path, results_df_fn))
+    results_df.to_pickle(snowlines_path + results_df_fn)
     print('all snowlines saved to file:' + snowlines_path + results_df_fn)
     # delete individual snowline files
     for df_fn in df_fns:
@@ -356,7 +355,7 @@ if 5 in steps_to_run:
     fig2.suptitle(site_name + ' Glacier snow line elevations')
 
     # save results
-    fig2.savefig(os.path.join(figures_out_path, site_name + '_sl_elevs_median.png'),
+    fig2.savefig(figures_out_path + site_name + '_sl_elevs_median.png',
                  facecolor='white', edgecolor='none')
     print('figure saved to file')
 
@@ -364,19 +363,20 @@ if 5 in steps_to_run:
     os.chdir(figures_out_path)
     fig_fns = glob.glob('PS_*_SCA.png') # load all output figure file names
     fig_fns = sorted(fig_fns) # sort chronologically
-    
+
     # grab figures date range for .gif file name
     fig_start_date = fig_fns[0][3:-8] # first figure date
     fig_end_date = fig_fns[-1][3:-8] # final figure date
     frames = [PIL_Image.open(im) for im in fig_fns]
     frame_one = frames[0]
     gif_fn = ('PS_' + fig_start_date[0:8] + '_' + fig_end_date[0:8] + '_SCA.gif' )
-    frame_one.save(os.path.join(figures_out_path, gif_fn), format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
+    frame_one.save(gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
     print('GIF saved to file:' + figures_out_path + gif_fn)
-    
+
     # delete individual figure files
     for fig_fn in fig_fns:
-        os.remove(os.path.join(figures_out_path, fig_fn))
+        os.remove(fig_fn)
+        
     print('Individual figure files deleted.')
 
 print('DONE!')

@@ -67,7 +67,7 @@ def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
     else:
         request = {
             "item_types": [item_type],
-            "asset_types": [asset_types],
+            "asset_types": asset_types,
             "filter": combined_filter
         }
             

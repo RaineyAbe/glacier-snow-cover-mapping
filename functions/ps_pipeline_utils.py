@@ -26,6 +26,9 @@ from osgeo import gdal
 import wxee as wx
 import xarray as xr
 import rioxarray as rxr
+from symfit import parameters, variables, sin, cos, Fit
+from sklearn.model_selection import train_test_split
+from time import mktime
 
 # --------------------------------------------------
 def plot_im_RGB_histogram(im_path, im_fn):
@@ -595,7 +598,7 @@ def sunpos(when, location, refraction):
 
 
 # --------------------------------------------------
-def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_path, out_path, skip_clipped, plot_results):
+def apply_hillshade_correction(crs, polygon, im_fn, im_path, DEM, out_path, out_path, skip_clipped, plot_results):
     '''
     Adjust image using by generating a hillshade model and minimizing the standard deviation of each band within the defined SCA
 
@@ -630,18 +633,20 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
 
     print('HILLSHADE CORRECTION')
 
+    # -----Load image
+    im = rxr.open_rasterio(im_path + im_fn)
+    # replace no data values with NaN
+    im = im.where(im!=-9999)
+    # account for image scalar multiplier
+    if (np.nanmean(im.data[0])>1e3):
+        im_scalar = 1e4
+        im = im / im_scalar
+    
     # -----Read image bands
-    im_scalar = 1e4
-    b = im.read(1).astype(float)
-    g = im.read(2).astype(float)
-    r = im.read(3).astype(float)
-    nir = im.read(4).astype(float)
-    # divide by im_scalar if they have not been already
-    if (np.nanmean(b)>1e3):
-        b = b / im_scalar
-        g = g / im_scalar
-        r = r / im_scalar
-        nir = nir / im_scalar
+    b = im.isel(band=0)
+    g = im.isel(band=1)
+    r = im.isel(band=2)
+    nir = im.isel(band=3)
 
     # -----Return if image bands are likely clipped
     if skip_clipped==True:
@@ -650,79 +655,66 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
             im_corrected_name = 'N/A'
             return im_corrected_name
 
-    # -----Define coordinates grid
-    im_x = np.linspace(im.bounds.left, im.bounds.right, num=np.shape(b)[1])
-    im_y = np.linspace(im.bounds.top, im.bounds.bottom, num=np.shape(b)[0])
-
-    # -----filter image points outside the SCA
-    im_x_mesh, im_y_mesh = np.meshgrid(im_x, im_y)
-    b_polygon = b[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
-                      (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
-    g_polygon = g[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
-                      (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
-    r_polygon = r[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
-                      (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
-    nir_polygon = nir[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) &
-                           (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
-
+    # -----Filter image points outside the SCA
+    # create a mask using the polygon geometry
+    mask = rio.features.geometry_mask([polygon],
+                                       np.shape(b),
+                                       im.rio.transform,
+                                       all_touched=False,
+                                       invert=False)
+    b_polygon = b[mask==0]
+    g_polygon = g[mask==0]
+    r_polygon = r[mask==0]
+    nir_polygon = nir[mask==0]
+    
     # -----Return if image does not contain real values within the SCA
-    if ((np.min(polygon.exterior.xy[0])>np.min(im_x))
-        & (np.max(polygon.exterior.xy[0])<np.max(im_x))
-        & (np.min(polygon.exterior.xy[1])>np.min(im_y))
-        & (np.max(polygon.exterior.xy[1])<np.max(im_y))
-        & (np.nanmean(b_polygon)>0))==False:
-
+    if len(~np.isnan(b))<1:
         print('image does not contain real values within the SCA... skipping.')
         im_corrected_name = 'N/A'
         return im_corrected_name
 
     # -----Extract image information for sun position calculation
     # location: grab center image coordinate, convert to lat lon
-    xmid = ((im.bounds.right - im.bounds.left)/2 + im.bounds.left)
-    ymid = ((im.bounds.top - im.bounds.bottom)/2 + im.bounds.bottom)
+    xmid = ((im.x.data[-1] - im.x.data[0])/2 + im.x.data[0])
+    ymid = ((im.y.data[-1] - im.y.data[0])/2 + im.y.data[0])
     transformer = Transformer.from_crs("epsg:"+str(crs), "epsg:4326")
     location = transformer.transform(xmid, ymid)
     # when: year, month, day, hour, minute, second
-    when = (float(im_name[0:4]), float(im_name[4:6]), float(im_name[6:8]),
-            float(im_name[9:11]), float(im_name[11:13]), float(im_name[13:15]))
+    when = (float(im_fn[0:4]), float(im_fn[4:6]), float(im_fn[6:8]),
+            float(im_fn[9:11]), float(im_fn[11:13]), float(im_fn[13:15]))
     # sun azimuth and elevation
     azimuth, elevation = sunpos(when, location, refraction=1)
 
     # -----Make directory for hillshade models (if it does not already exist in file)
-    if os.path.exists(hs_path)==False:
-        os.mkdir(hs_path)
-        print('made directory for hillshade model:'+hs_path)
+    if os.path.exists(out_path)==False:
+        os.mkdir(out_path)
+        print('made directory for hillshade correction outputs: ' + out_path)
 
     # -----Create hillshade model (if it does not already exist in file)
-    hs_fn = hs_path+str(azimuth)+'-az_'+str(elevation)+'-z_hillshade.tif'
-    if os.path.exists(hs_fn):
+    hs_fn = str(azimuth) + '-az_' + str(elevation) + '-z_hillshade.tif'
+    if os.path.exists(out_path + hs_fn):
         print('hillshade model already exists in directory, loading...')
     else:
 #                print('creating hillshade model...')
         # construct the gdal_merge command
         # modified from: https://github.com/clhenrick/gdal_hillshade_tutorial
         # gdaldem hillshade -az aximuth -z elevation dem.tif hillshade.tif
-        cmd = 'gdaldem hillshade -az '+str(azimuth)+' -z '+str(elevation)+' '+str(DEM_path)+' '+hs_fn
+        cmd = 'gdaldem hillshade -az ' + str(azimuth) + ' -z ' + str(elevation)+' ' + str(DEM_path) + ' ' + hs_path + hs_fn
         # run the command
         p = subprocess.run(cmd, shell=True, capture_output=True)
         print(p)
 
     # -----load hillshade model from file
-    hs = rio.open(hs_fn)
+    hs = rxr.open_rasterio(hs_path, hs_fn)
 #            print('hillshade model loaded from file...')
-    # coordinates
-    hs_x = np.linspace(hs.bounds.left, hs.bounds.right, num=np.shape(hs.read(1))[1])
-    hs_y = np.linspace(hs.bounds.top, hs.bounds.bottom, num=np.shape(hs.read(1))[0])
 
     # -----Resample hillshade to image coordinates
     # resampled hillshade file name
-    hs_resamp_fn = hs_path+str(azimuth)+'-az_'+str(elevation)+'-z_hillshade_resamp.tif'
-    # create interpolation object
-    f = interp2d(hs_x, hs_y, hs.read(1))
-    hs_resamp = f(im_x, im_y)
-    hs_resamp = np.flipud(hs_resamp)
+    hs_resamp_fn = str(azimuth) + '-az_' + str(elevation) + '-z_hillshade_resamp.tif'
+    band, x, y = im.indexes.values() # grab indices of image
+    DEM_AOI_interp = DEM_AOI.interp(x=x, y=y, method="nearest") # interpolate DEM
     # save to file
-    with rio.open(hs_resamp_fn,'w',
+    with rio.open(out_path + hs_resamp_fn,'w',
                   driver='GTiff',
                   height=hs_resamp.shape[0],
                   width=hs_resamp.shape[1],
@@ -731,26 +723,17 @@ def apply_hillshade_correction(crs, polygon, im, im_name, im_path, DEM_path, hs_
                   crs=im.crs,
                   transform=im.transform) as dst:
         dst.write(hs_resamp, 1)
-    print('resampled hillshade model saved to file:',hs_resamp_fn)
+    print('resampled hillshade model saved to file:' + out_path + hs_resamp_fn)
 
     # -----load resampled hillshade model
-    hs_resamp = rio.open(hs_resamp_fn).read(1)
+    hs_resamp = rxr.open_rasterio(hs_resamp_fn).squeeze()
     print('resampled hillshade model loaded from file')
     # -----filter hillshade model points outside the SCA
-    hs_polygon = hs_resamp[np.where((im_x_mesh >= polygon.bounds[0]) & (im_x_mesh <= polygon.bounds[2]) & (im_y_mesh >= polygon.bounds[1]) & (im_y_mesh <= polygon.bounds[3]))]
+    hs_polygon = hs_resamp.data[0][mask==0]
 
     # -----normalize hillshade model
     hs_norm = (hs_resamp - np.min(hs_resamp)) / (np.max(hs_resamp) - np.min(hs_resamp))
     hs_polygon_norm = (hs_polygon - np.min(hs_polygon)) / (np.max(hs_polygon) - np.min(hs_polygon))
-
-            # -----plot resampled, normalized hillshade model for sanity check
-    #        fig, (ax1, ax2) = plt.subplots(1,2,figsize=(12,8))
-    #        hs_im = ax1.imshow(hs.read(1), extent=(np.min(hs_x)/1000, np.max(hs_x)/1000, np.min(hs_y)/1000, np.max(hs_y)/1000))
-    #        hsnorm_im = ax2.imshow(hs_norm, extent=(np.min(im_x)/1000, np.max(im_x)/1000, np.min(im_y)/1000, np.max(im_y)/1000))
-    #        ax2.plot([x/1000 for x in SCA.exterior.xy[0]], [y/1000 for y in SCA.exterior.xy[1]], color='white', linewidth=2, label='SCA')
-    #        fig.colorbar(hs_im, ax=ax1, shrink=0.5)
-    #        fig.colorbar(hsnorm_im, ax=ax2, shrink=0.5)
-    #        plt.show()
 
     # -----loop through hillshade scalar multipliers
 #            print('solving for optimal band scalars...')
@@ -1929,6 +1912,7 @@ def reduce_memory_usage(df, verbose=True):
         )
     return df
 
+
 # --------------------------------------------------
 def convert_wgs_to_utm(lon: float, lat: float):
     """Based on lat and lon, return best utm epsg-code"""
@@ -1940,3 +1924,224 @@ def convert_wgs_to_utm(lon: float, lat: float):
         return epsg_code
     epsg_code = '327' + utm_band
     return epsg_code
+
+
+# --------------------------------------------------
+def fourier_series_symb(x, f, n=0):
+    """
+    Creates a symbolic fourier series of order 'n'.
+
+    Parameters
+    ----------
+    n: float
+        Order of the fourier series
+    x: numpy.array
+        Independent variable
+    f: float
+        Frequency of the fourier series
+        
+    Returns
+    ----------
+    series: str
+        symbolic fourier series of order 'n'
+    """
+    # Make the parameter objects for all the terms
+    a0, *cos_a = parameters(','.join(['a{}'.format(i) for i in range(0, n + 1)]))
+    sin_b = parameters(','.join(['b{}'.format(i) for i in range(1, n + 1)]))
+    # Construct the series
+    series = a0 + sum(ai * cos(i * f * x) + bi * sin(i * f * x)
+                     for i, (ai, bi) in enumerate(zip(cos_a, sin_b), start=1))
+    return series
+
+
+# --------------------------------------------------
+def fourier_model(c, X):
+    '''
+    Generates a fourier series model using the given coefficients, evaluated at the input X values.
+    
+    Parameters
+    ----------
+    c: numpy.array
+        vector containing the coefficients for the Fourier fit
+    x: numpy.array
+        x-values at which to evaluate the model
+        
+    Returns
+    ----------
+    ymod: numpy.array
+        modeled y-values values at each x-value
+    '''
+    
+    if len(c): # at least a1 and b1 coefficients exist
+        # grab a0 and w coefficients
+        a0 = c[0]
+        w = c[-1]
+        # list a and b coefficients in pairs, with a coeffs in one column, b coeffs in the second column
+        coeff_pairs = list(zip(*[iter(c[1:])]*2))
+        # separate a and b coefficients
+        a_coeffs = [y[0] for y in coeff_pairs]
+        b_coeffs = [y[1] for y in coeff_pairs]
+        # construct the series
+        series_a = np.zeros(len(X))
+        for i, x in enumerate(X): # loop through x values
+            series_a[i] = np.sum([y*np.cos((i+1)*x*w) for i, y in enumerate(a_coeffs)]) # sum the a terms
+        series_b = np.zeros(len(X))
+        for i, x in enumerate(X): # loop through x values
+            series_b[i] = np.sum([y*np.sin((i+1)*x*w) for i, y in enumerate(b_coeffs)]) # sum the a terms
+        ymod = [a0+a+b for a, b in list(zip(series_a, series_b))]
+    else: # only a0 coefficient exists
+        ymod = a0*np.ones(len(X))
+        
+    return ymod
+    
+    
+# --------------------------------------------------
+def optimized_fourier_model(X, Y, nyears, plot_results):
+    '''
+    Generate a modeled fit to input data using Fourier series. First, identify the ideal number of terms for the Fourier model using 100 Monte Carlo simulations. Then, solve for the mean value for each coefficient using 500 Monte Carlo simulations.
+    
+    Parameters
+    ----------
+    X: numpy.array
+        independent variable
+    Y: numpy.array
+        dependent variable
+    nyears: int
+        number of years (or estimated periods in your data) used to determine the range of terms to test
+    plot_results: bool
+        whether to plot results
+    
+    Returns
+    ----------
+    Y_mod: numpy.array
+        modeled y values evaluated at each X-value
+    '''
+
+    # -----Identify the ideal number of terms for the Fourier model using Monte Carlo simulations
+    # set up variables and parameters
+    x, y = variables('x, y')
+    w, = parameters('w')
+    model_dict = {y: fourier_series_symb(x, f=w, n=5)}
+    
+    nmc = 100 # number of Monte Carlo simulations
+    pTrain = 0.9 # percent of data to use as training
+    fourier_ns = [nyears-1, nyears, nyears+1]
+    print('Conducting 100 Monte Carlo simulations to determine the ideal number of model terms...')
+
+    # loop through possible number of terms
+    df_terms = pd.DataFrame(columns=['fit_minus1_err', 'fit_err', 'fit_plus1_err'])
+    for i in np.arange(0,nmc):
+            
+        # split into training and testing data
+        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size=pTrain, shuffle=True)
+        # fit fourier curves to the training data with varying number of coeffients
+        fit_minus1 = Fit({y: fourier_series_symb(x, f=w, n=fourier_ns[0])},
+                    x=X_train, y=Y_train).execute()
+        fit = Fit({y: fourier_series_symb(x, f=w, n=fourier_ns[1])},
+                    x=X_train, y=Y_train).execute()
+        fit_plus1 = Fit({y: fourier_series_symb(x, f=w, n=fourier_ns[2])},
+                    x=X_train, y=Y_train).execute()
+        # fit models to testing data
+        Y_pred_minus1 = fit_minus1.model(x=X_test, **fit_minus1.params).y
+        Y_pred = fit.model(x=X_test, **fit.params).y
+        Y_pred_plus1 = fit_plus1.model(x=X_test, **fit_plus1.params).y
+        # calculate error, concatenate to df
+        fit_minus1_err = np.abs(Y_test - Y_pred_minus1)
+        fit_err = np.abs(Y_test - Y_pred)
+        fit_plus1_err = np.abs(Y_test - Y_pred_plus1)
+        result = pd.DataFrame({'fit_minus1_err': fit_minus1_err,
+                               'fit_err': fit_err,
+                               'fit_plus1_err': fit_plus1_err})
+        # add results to df
+        df_terms = pd.concat([df_terms, result])
+    
+    df_terms = df_terms.reset_index(drop=True)
+    
+    # plot results
+    if plot_results:
+        fig, ax = plt.subplots(1, 3, figsize=(12, 5))
+        ax[0].boxplot(fit_minus1_err);
+        ax[0].set_title(str(fourier_ns[0]) + ' terms, N=' + str(len(fit_minus1_err)));
+        ax[0].set_ylim(np.min([fit_minus1_err, fit_err, fit_plus1_err])-10, np.max([fit_minus1_err, fit_err, fit_plus1_err])+10)
+        ax[0].set_ylabel('Least absolute error')
+        ax[1].boxplot(fit_err);
+        ax[1].set_title(str(fourier_ns[1]) + ' terms, N=' + str(len(fit_err)));
+        ax[1].set_ylim(np.min([fit_minus1_err, fit_err, fit_plus1_err])-10, np.max([fit_minus1_err, fit_err, fit_plus1_err])+10)
+        ax[2].boxplot(fit_plus1_err);
+        ax[2].set_ylim(np.min([fit_minus1_err, fit_err, fit_plus1_err])-10, np.max([fit_minus1_err, fit_err, fit_plus1_err])+10)
+        ax[2].set_title(str(fourier_ns[2]) + ' terms, N=' + str(len(fit_plus1_err)));
+        plt.show()
+        
+    # calculate mean error for each number of coefficients
+    fit_err_mean = [np.nanmean(df_terms['fit_minus1_err']), np.nanmean(df_terms['fit_err']), np.nanmean(df_terms['fit_plus1_err'])]
+    # identify best number of coefficients
+    Ibest = np.argmin(fit_err_mean)
+    fit_best = [fit_minus1, fit, fit_plus1][Ibest]
+    fourier_n = fourier_ns[Ibest]
+    print('Optimal # of model terms = ' + str(fourier_n))
+    print('Mean error = +/- ' + str(np.round(fit_err_mean[Ibest])) + ' m')
+    
+    # -----Conduct Monte Carlo simulations to generate 500 Fourier models
+    nmc = 500 # number of monte carlo simulations
+    # initialize coefficients data frame
+    cols = [val[0] for val in fit_best.params.items()]
+#    df_coeffs = pd.DataFrame(columns=cols)
+    Y_mod = np.zeros((nmc, len(X))) # array to hold modeled Y values
+    Y_mod_err = np.zeros(nmc) # array to hold error associated with each model
+    print('Conducting Monte Carlo simulations to generate 500 Fourier models...')
+    # loop through Monte Carlo simulations
+    for i in np.arange(0,nmc):
+            
+        # split into training and testing data
+        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size=pTrain, shuffle=True)
+
+        # fit fourier model to training data
+        fit = Fit({y: fourier_series_symb(x, f=w, n=fourier_n)},
+                    x=X_train, y=Y_train).execute()
+
+        # apply fourier model to testing data
+        Y_pred = fit.model(x=X_test, **fit_best.params).y
+        
+        # calculate mean error
+        Y_mod_err[i] = np.sum(np.abs(Y_test - Y_pred)) / len(Y_test)
+        
+        # apply the model to the full X data
+        c = [c[1] for c in fit.params.items()] # coefficient values
+        Y_mod[i,:] = fourier_model(c, X)
+        
+        # compile coefficient values
+#        result = result = pd.DataFrame(columns=cols)
+#        result[cols[0]] = np.zeros(1)
+#        vals = [val[1] for val in fit.params.items()] # coefficient values
+#        for i, col in enumerate(cols):
+#            result[col] = vals[i]
+#        # concatenate results to df
+#        df_coeffs = pd.concat([df_coeffs, result])
+        
+#    df_coeffs = df_coeffs.reset_index(drop=True)
+    
+    # -----Calculate the median value for each modeled y value
+#    Y_mod_median = np.median(Y_mod)
+    # calculate mean coefficient values
+#    c = [x for x in df_coeffs.mean().values]
+#    Y_mod = fourier_model(c, X)
+
+    # plot results
+    if plot_results:
+        Y_mod_iqr = iqr(Y_mod, axis=0)
+        Y_mod_median = np.nanmedian(Y_mod, axis=0)
+        Y_mod_P25 = Y_mod_median - Y_mod_iqr/2
+        Y_mod_P75 = Y_mod_median + Y_mod_iqr/2
+
+        fig, ax = plt.subplots(figsize=(10,6))
+        plt.rcParams.update({'font.size':14})
+        ax.fill_between(X, Y_mod_P25, Y_mod_P75, facecolor='blue', alpha=0.5, label='model$_{IQR}$')
+        ax.plot(X, np.median(Y_mod, axis=0), '.-b', linewidth=1, label='model$_{median}$')
+        ax.plot(X, Y, 'ok', markersize=5, label='data')
+        ax.set_ylabel('Snowline elevation [m]')
+        ax.set_xlabel('Days since 2016-05-01')
+        ax.grid()
+        ax.legend(loc='best')
+        plt.show()
+    
+    return Y_mod, Y_mod_err
