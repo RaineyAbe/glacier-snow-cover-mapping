@@ -1,5 +1,5 @@
 # snow-cover-mapping
-#### Rainey Aberle
+#### Rainey Aberle, Ellyn Enderlin, HP Marshall, Shad O'Neel, & Alejandro Flores
 #### Boise State University
 #### Contact: raineyaberle@u.boisestate.edu
 
@@ -31,4 +31,4 @@ Now, run the following command in a terminal so that you can use the `planet-sno
 `python -m ipykernel install --user --name=snow-cover-mapping`
 
 #### 5. Open a Jupyter Notebook
-To open a jupyter notebook, navigate (`cd`) to the `planet-snow` directory on your machine if you have not already and run the following command: `jupyter notebook notebook.ipynb`, replacing `notebook.ipynb` with the name of the notebook you would like to open. The notebook should open in a browser.
+To open a jupyter notebook, navigate (`cd`) to the `snow-cover-mapping` directory on your machine if you have not already and run the following command: `jupyter notebook notebook.ipynb`, replacing `notebook.ipynb` with the name of the notebook you would like to open. The notebook should open in a browser.
