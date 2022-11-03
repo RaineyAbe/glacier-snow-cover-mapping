@@ -19,7 +19,7 @@ import numpy as np
 
 
 def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
-                  item_type, asset_type):
+                  item_type, asset_types):
     '''Compile input filters to create request for Planet API search'''
     
     geometry_filter = {
@@ -44,26 +44,50 @@ def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
         "lte": max_cloud_cover
       }
     }
-
+    
+#    asset_filter = []
+#    for asset_type in asset_types:
+#        af = {
+#            "type": "AssetFilter",
+#            "config": asset_type
+#        }
+#        asset_filter = asset_filter + [af]
+#
     combined_filter = {
       "type": "AndFilter",
       "config": [geometry_filter, date_range_filter, cloud_cover_filter]
     }
 
-    request = {
-        "item_types": [item_type],
-        "asset_types": [asset_type],
-        "filter": combined_filter
-    }
+    if len(asset_types) > 1:
+        request = {
+            "item_types": [item_type],
+            "asset_types": asset_types,
+            "filter": combined_filter
+        }
+    else:
+        request = {
+            "item_types": [item_type],
+            "asset_types": asset_types,
+            "filter": combined_filter
+        }
             
     return request
 
-def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset_type):
+def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset_types):
     '''Build Planet API request for image orders with image IDs'''
     
     # define the clip and harmonize tools
     clip_tool = {"clip": {"aoi": AOI_box}}
     harmonize_tool = {"harmonize": {"target_sensor": "Sentinel-2"}}
+    
+    # determine which product bundle to use
+    if ("analytic_sr" in asset_types) & ("udm2" in asset_types):
+        product_bundle = "analytic_sr_udm2"
+    elif ("analytic_sr" in asset_types):
+        product_bundle = "analytic_sr"
+    else:
+        print("asset types not recognized for product bundle, exiting...")
+        return "N/A"
     
     # create request object depending on settings
     if (clip_AOI==True) & (harmonize==True):
@@ -73,7 +97,7 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
               {
                   "item_ids": im_ids,
                   "item_type": item_type,
-                  "product_bundle": asset_type
+                  "product_bundle": product_bundle
               }
            ],
             "tools": [clip_tool, harmonize_tool]
@@ -85,7 +109,7 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
               {
                   "item_ids": im_ids,
                   "item_type": item_type,
-                  "product_bundle": asset_type
+                  "product_bundle": product_bundle
               }
            ],
             "tools": [clip_tool]
@@ -97,7 +121,7 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
               {
                   "item_ids": im_ids,
                   "item_type": item_type,
-                  "product_bundle": asset_type
+                  "product_bundle": product_bundle
               }
            ],
             "tools": [harmonize_tool]
@@ -109,7 +133,7 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
               {
                   "item_ids": im_ids,
                   "item_type": item_type,
-                  "product_bundle": asset_type
+                  "product_bundle": product_bundle
               }
            ]
         }
@@ -134,7 +158,7 @@ def place_order(orders_url, search_request, auth):
     order_url = orders_url + '/' + order_id
     return order_url
     
-def poll_for_success(order_url, auth, num_loops=30):
+def poll_for_success(order_url, auth, num_loops=1e10):
     count = 0
     while(count < num_loops):
         count += 1
