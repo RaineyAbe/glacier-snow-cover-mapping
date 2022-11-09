@@ -14,6 +14,7 @@ import os
 from shapely.geometry import Polygon, MultiPolygon, shape, Point, LineString
 from scipy.interpolate import interp2d, griddata
 from scipy.signal import medfilt
+from scipy.stats import iqr
 from skimage.measure import find_contours
 from scipy.ndimage import binary_fill_holes
 import glob
@@ -28,7 +29,6 @@ import xarray as xr
 import rioxarray as rxr
 from symfit import parameters, variables, sin, cos, Fit
 from sklearn.model_selection import train_test_split
-from time import mktime
 
 # --------------------------------------------------
 def plot_im_RGB_histogram(im_path, im_fn):
@@ -325,7 +325,7 @@ def mask_im_pixels(im_path, im_fn, out_path, save_outputs, plot_results):
     im = rxr.open_rasterio(im_fn)
     im_rio = rio.open(im_fn)
     # replace no data values with NaN
-    im = im.where(im!=-9999)
+    im = im.where(im!=im._FillValue)
     # account for band scalar multiplier
     im_scalar = 1e4
     im = im / im_scalar
@@ -353,38 +353,40 @@ def mask_im_pixels(im_path, im_fn, out_path, save_outputs, plot_results):
         
     else:
         print('No udm file found for image, no mask applied.')
-            
-    # -----Plot results
-    if plot_results:
-        fig, ax = plt.subplots(1, 2, figsize=(16, 8))
-        ax[0].imshow(np.dstack([im.data[2], im.data[1], im.data[0]]))
-        ax[1].imshow(np.dstack([im_mask.data[2], im_mask.data[1], im_mask.data[0]]))
-        ax[1].imshow(np.where(mask==0, 1, np.nan), cmap='Blues')
-        plt.show()
         
     # -----Save masked raster image to file
     if save_outputs:
         # reformat bands for saving as int data type
         for i in np.arange(0, len(im_mask.data)):
-            im_mask.data[i] = im_mask.data[i] * im_scalar # multiply by image scalar
-            im_mask.data[i] = np.where(np.isnan(im_mask.data[i]), -9999, im_mask.data[i]) # replace NaNs with -9999
+            # replace NaNs with -9999, multiply real values by image scalar
+            im_mask.data[i] = np.where(~np.isnan(im_mask.data[i]), im_mask.data[i] * im_scalar, -9999)
         # copy metadata
         out_meta = im_rio.meta.copy()
         out_meta.update({'driver': 'GTiff',
                          'width': im_mask.data[0].shape[1],
                          'height': im_mask.data[0].shape[0],
                          'count': 4,
-                         'dtype': 'uint16',
+                         'dtype': 'int16',
+                         'nodata': -9999,
                          'crs': im_rio.crs,
                          'transform': im_rio.transform})
         # write to file
         with rio.open(os.path.join(out_path, im_mask_fn), mode='w',**out_meta) as dst:
-            # write bands - multiply bands by im_scalar and convert datatype to uint64 to decrease file size
+            # write bands - multiply bands by im_scalar and convert datatype to int16 to decrease file size
             dst.write_band(1, im_mask.data[0])
             dst.write_band(2, im_mask.data[1])
             dst.write_band(3, im_mask.data[2])
             dst.write_band(4, im_mask.data[3])
         print('masked image saved to file: ' + out_path + im_mask_fn)
+        
+    # -----Plot results
+    if plot_results:
+        fig, ax = plt.subplots(1, 2, figsize=(16, 8))
+        ax[0].imshow(np.dstack([im.data[2], im.data[1], im.data[0]]))
+        # set no data values to NaN, divide my im_scalar for plotting
+        im_mask = im_mask.where(im_mask!=-9999) / im_scalar
+        ax[1].imshow(np.dstack([im_mask.data[2], im_mask.data[1], im_mask.data[0]]))
+        plt.show()
 
 # --------------------------------------------------
 def mosaic_ims_by_date(im_path, im_fns, out_path, AOI, plot_results):
@@ -421,7 +423,7 @@ def mosaic_ims_by_date(im_path, im_fns, out_path, AOI, plot_results):
         date = scene[0:11]
         unique_scenes.append(date)
     unique_scenes = list(set(unique_scenes))
-    unique_scenes.sort() # sort chronologically
+    unique_scenes = sorted(unique_scenes) # sort chronologically
 
     # -----Loop through unique scenes
     for scene in unique_scenes:
@@ -467,7 +469,7 @@ def mosaic_ims_by_date(im_path, im_fns, out_path, AOI, plot_results):
                 if len(file_paths) > 0:
 
                     # construct the gdal_merge command
-                    cmd = 'gdal_merge.py -v '
+                    cmd = 'gdal_merge.py -v -n -9999 -a_nodata -9999 '
 
                     # add input files to command
                     for file_path in file_paths:
@@ -598,7 +600,7 @@ def sunpos(when, location, refraction):
 
 
 # --------------------------------------------------
-def apply_hillshade_correction(crs, polygon, im_fn, im_path, DEM, out_path, out_path, skip_clipped, plot_results):
+def apply_hillshade_correction(crs, polygon, im_fn, im_path, DEM, out_path, skip_clipped, plot_results):
     '''
     Adjust image using by generating a hillshade model and minimizing the standard deviation of each band within the defined SCA
 
@@ -1147,12 +1149,12 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
                          'width': b_save.shape[1],
                          'height': b_save.shape[0],
                          'count': 4,
-                         'dtype': 'uint16',
+                         'dtype': 'int16',
                          'crs': im_rio.crs,
                          'transform': im_rio.transform})
         # write to file
         with rio.open(os.path.join(out_path, im_adj_fn), mode='w',**out_meta) as dst:
-            # write bands - multiply bands by im_scalar and convert datatype to uint64 to decrease file size
+            # write bands - multiply bands by im_scalar and convert datatype to int16 to decrease file size
             dst.write_band(1, b_save)
             dst.write_band(2, g_save)
             dst.write_band(3, r_save)
@@ -2085,8 +2087,8 @@ def optimized_fourier_model(X, Y, nyears, plot_results):
     nmc = 500 # number of monte carlo simulations
     # initialize coefficients data frame
     cols = [val[0] for val in fit_best.params.items()]
-#    df_coeffs = pd.DataFrame(columns=cols)
-    Y_mod = np.zeros((nmc, len(X))) # array to hold modeled Y values
+    X_mod = np.linspace(X[0], X[-1], num=100) # points at which to evaluate the model
+    Y_mod = np.zeros((nmc, len(X_mod))) # array to hold modeled Y values
     Y_mod_err = np.zeros(nmc) # array to hold error associated with each model
     print('Conducting Monte Carlo simulations to generate 500 Fourier models...')
     # loop through Monte Carlo simulations
@@ -2098,33 +2100,18 @@ def optimized_fourier_model(X, Y, nyears, plot_results):
         # fit fourier model to training data
         fit = Fit({y: fourier_series_symb(x, f=w, n=fourier_n)},
                     x=X_train, y=Y_train).execute()
+        
+#        print(str(i)+ ' '+ str(len(fit.params)))
 
         # apply fourier model to testing data
-        Y_pred = fit.model(x=X_test, **fit_best.params).y
+        Y_pred = fit.model(x=X_test, **fit.params).y
         
         # calculate mean error
         Y_mod_err[i] = np.sum(np.abs(Y_test - Y_pred)) / len(Y_test)
         
         # apply the model to the full X data
         c = [c[1] for c in fit.params.items()] # coefficient values
-        Y_mod[i,:] = fourier_model(c, X)
-        
-        # compile coefficient values
-#        result = result = pd.DataFrame(columns=cols)
-#        result[cols[0]] = np.zeros(1)
-#        vals = [val[1] for val in fit.params.items()] # coefficient values
-#        for i, col in enumerate(cols):
-#            result[col] = vals[i]
-#        # concatenate results to df
-#        df_coeffs = pd.concat([df_coeffs, result])
-        
-#    df_coeffs = df_coeffs.reset_index(drop=True)
-    
-    # -----Calculate the median value for each modeled y value
-#    Y_mod_median = np.median(Y_mod)
-    # calculate mean coefficient values
-#    c = [x for x in df_coeffs.mean().values]
-#    Y_mod = fourier_model(c, X)
+        Y_mod[i,:] = fourier_model(c, X_mod)
 
     # plot results
     if plot_results:
@@ -2135,13 +2122,93 @@ def optimized_fourier_model(X, Y, nyears, plot_results):
 
         fig, ax = plt.subplots(figsize=(10,6))
         plt.rcParams.update({'font.size':14})
-        ax.fill_between(X, Y_mod_P25, Y_mod_P75, facecolor='blue', alpha=0.5, label='model$_{IQR}$')
-        ax.plot(X, np.median(Y_mod, axis=0), '.-b', linewidth=1, label='model$_{median}$')
+        ax.fill_between(X_mod, Y_mod_P25, Y_mod_P75, facecolor='blue', alpha=0.5, label='model$_{IQR}$')
+        ax.plot(X_mod, np.median(Y_mod, axis=0), '.-b', linewidth=1, label='model$_{median}$')
         ax.plot(X, Y, 'ok', markersize=5, label='data')
         ax.set_ylabel('Snowline elevation [m]')
-        ax.set_xlabel('Days since 2016-05-01')
+        ax.set_xlabel('Days since first observation date')
         ax.grid()
         ax.legend(loc='best')
         plt.show()
     
-    return Y_mod, Y_mod_err
+    return X_mod, Y_mod, Y_mod_err
+    
+# --------------------------------------------------
+def Landsat_mask_clouds(im_collection, bands, plot_results):
+    '''
+    Adapted from: https://medium.com/analytics-vidhya/python-for-geosciences-raster-bit-masks-explained-step-by-step-8620ed27141e
+    '''
+
+    # -----Create dictionary of possible mask values
+    mask_values = {
+                   'Dilated cloud over land': 21826,
+                   'Dilated cloud over water': 21890,
+                   'Mid conf Cloud': 22280,
+                   'High conf cloud shadow': 23888,
+                   'Water with cloud shadow': 23952,
+                   'Mid conf cloud with shadow': 24088,
+                   'Mid conf cloud with shadow over water': 24216,
+                   'High conf cloud with shadow': 24344,
+                   'High conf cloud with shadow over water': 24472,
+                   'High conf Cirrus': 54596,
+                   'Cirrus, high cloud': 55052,
+                   'Cirrus, mid conf cloud, shadow': 56856,
+                   'Cirrus, mid conf cloud, shadow, over water': 56984,
+                   'Cirrus, high conf cloud, shadow': 57240,
+                  }
+
+    # -----Loop through times in image collection
+    # copy image collection
+    im_collection_mask = im_collection.copy()
+    # loop through times
+    for i, t in enumerate(im_collection.time):
+        
+        # subset image from image collection using time
+        im = im_collection.sel(time=t)
+        # add time dimension
+        im['time'] = t
+        # plot image
+        if plot_results:
+            fig, ax = plt.subplots(1, 3, figsize=(14,6))
+            fig.suptitle(str(t.data)[0:10])
+            ax[0].imshow(np.dstack([im['SR_B4'].data, im['SR_B3'].data, im['SR_B2'].data]),
+                         extent=(np.min(im.x.data)/1e3, np.max(im.x.data)/1e3,
+                                 np.min(im.y.data)/1e3, np.max(im.y.data)/1e3))
+            ax[0].set_xlabel('Easting [km]')
+            ax[0].set_ylabel('Northing [km]')
+            ax[0].set_title('Raw image')
+            
+        # initialize boolean matrix for final mask
+        final_mask = np.full(np.shape(im['QA_PIXEL'].data), False)
+        # loop through dictionary values
+        for key, value in mask_values.items():
+            # mask when QA_PIXEl equals the value of the condition
+            mask = np.where(im['QA_PIXEL'].data == value, True, False)
+            # merge the mask with final_mask using the or (|) operator
+            final_mask = final_mask | mask
+            
+        # apply mask to image bands
+        for band in bands:
+            im[band] = im[band].where(final_mask!=1)
+        # add image back to collection
+        im_collection_mask.loc[{'time':t, 'x':im.x.data, 'y':im.y.data}] = im
+
+        # plot results
+        if plot_results:
+            mask_im = ax[1].imshow(final_mask, cmap='Greys',
+                         extent=(np.min(im.x.data)/1e3, np.max(im.x.data)/1e3,
+                                 np.min(im.y.data)/1e3, np.max(im.y.data)/1e3))
+            ax[1].set_xlabel('Easting [km]')
+            ax[1].set_title('Mask')
+            ax[2].imshow(np.dstack([im_collection_mask.sel(time=t)['SR_B4'].data,
+                                    im_collection_mask.sel(time=t)['SR_B3'].data,
+                                    im_collection_mask.sel(time=t)['SR_B2'].data]),
+                                  extent=(np.min(im_collection_mask.x.data)/1e3, np.max(im_collection_mask.x.data)/1e3,
+                                          np.min(im_collection_mask.y.data)/1e3, np.max(im_collection_mask.y.data)/1e3))
+            ax[2].set_xlabel('Easting [km]')
+            ax[2].set_title('Masked image')
+            # fig.colorbar(mask_im, ax=ax[1], shrink=0.3)
+            plt.show()
+            
+    return im_collection_mask
+

@@ -183,7 +183,7 @@ if 2 in steps_to_run:
 # -----Read image mosaic file names
 os.chdir(im_mosaic_path)
 im_mosaic_fns = glob.glob('*.tif')
-im_mosaic_fns.sort()
+im_mosaic_fns = sorted(im_mosaic_fns)
 
 # -----Create a polygon(s) of the top 20th percentile elevations within the AOI
 polygon_top, polygon_bottom, im_mosaic_fn, im_mosaic = f.create_AOI_elev_polys(AOI_UTM, im_mosaic_path, im_mosaic_fns, DEM, DEM_rio)
@@ -363,7 +363,6 @@ if 5 in steps_to_run:
     os.chdir(figures_out_path)
     fig_fns = glob.glob('PS_*_SCA.png') # load all output figure file names
     fig_fns = sorted(fig_fns) # sort chronologically
-
     # grab figures date range for .gif file name
     fig_start_date = fig_fns[0][3:-8] # first figure date
     fig_end_date = fig_fns[-1][3:-8] # final figure date
@@ -372,11 +371,9 @@ if 5 in steps_to_run:
     gif_fn = ('PS_' + fig_start_date[0:8] + '_' + fig_end_date[0:8] + '_SCA.gif' )
     frame_one.save(gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
     print('GIF saved to file:' + figures_out_path + gif_fn)
-
     # delete individual figure files
     for fig_fn in fig_fns:
         os.remove(fig_fn)
-        
     print('Individual figure files deleted.')
 
 print('DONE!')
