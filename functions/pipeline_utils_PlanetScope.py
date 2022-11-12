@@ -97,7 +97,7 @@ def plot_im_RGB_histogram(im_path, im_fn):
     return fig
 
 # --------------------------------------------------
-def plot_im_classified_histogram_contour(im, im_classified, DEM, DEM_rio, AOI, contour):
+def plot_im_classified_histogram_contour(im, im_classified, DEM, AOI, contour):
     '''
     Plot the classified image with snow elevations histogram and plot an elevation contour corresponding to the estimated snow line elevation.
 
@@ -109,8 +109,6 @@ def plot_im_classified_histogram_contour(im, im_classified, DEM, DEM_rio, AOI, c
         single band, classified image
     DEM: xarray.DataSet
         digital elevation model over the image area
-    DEM_rio: rasterio.DatasetReader
-        digital elevation model opened using rasterio (to access the transform for masking)
     AOI: geopandas.geodataframe.GeoDataFrame
         area of interest
     contour: float
@@ -129,7 +127,7 @@ def plot_im_classified_histogram_contour(im, im_classified, DEM, DEM_rio, AOI, c
     # mask the DEM using the AOI
     mask = rio.features.geometry_mask(AOI.geometry,
                                       out_shape=(len(DEM.y), len(DEM.x)),
-                                      transform=DEM_rio.transform,
+                                      transform=DEM.rio.transform(),
                                       invert=True)
     mask = xr.DataArray(mask , dims=("y", "x"))
     # mask DEM values outside the AOI
@@ -186,8 +184,12 @@ def plot_im_classified_histogram_contour(im, im_classified, DEM, DEM_rio, AOI, c
     ax[1].set_xlabel('Easting [km]')
     # AOI
     if AOI.geometry[0].geom_type=='MultiPolygon': # loop through geoms if AOI = MultiPolygon
-        for poly in AOI.geometry[0].geoms:
-            ax[0].plot([x/1e3 for x in poly.exterior.coords.xy[0]], [y/1e3 for y in poly.exterior.coords.xy[1]], '-k', linewidth=1, label='AOI')
+        for i, poly in enumerate(AOI.geometry[0].geoms):
+            # only include 'AOI' in legend for first geom plot
+            if i==0:
+                ax[0].plot([x/1e3 for x in poly.exterior.coords.xy[0]], [y/1e3 for y in poly.exterior.coords.xy[1]], '-k', linewidth=1, label='AOI')
+            else:
+                ax[0].plot([x/1e3 for x in poly.exterior.coords.xy[0]], [y/1e3 for y in poly.exterior.coords.xy[1]], '-k', linewidth=1, label='_nolegend_')
             ax[1].plot([x/1e3 for x in poly.exterior.coords.xy[0]], [y/1e3 for y in poly.exterior.coords.xy[1]], '-k', linewidth=1, label='_nolegend_')
     else:
         ax[0].plot([x/1e3 for x in AOI.geometry[0].exterior.coords.xy[0]], [y/1e3 for y in AOI.geometry[0].exterior.coords.xy[1]], '-k', linewidth=1, label='AOI')
@@ -323,7 +325,6 @@ def mask_im_pixels(im_path, im_fn, out_path, save_outputs, plot_results):
     # -----Open image
     os.chdir(im_path)
     im = rxr.open_rasterio(im_fn)
-    im_rio = rio.open(im_fn)
     # replace no data values with NaN
     im = im.where(im!=im._FillValue)
     # account for band scalar multiplier
@@ -360,24 +361,27 @@ def mask_im_pixels(im_path, im_fn, out_path, save_outputs, plot_results):
         for i in np.arange(0, len(im_mask.data)):
             # replace NaNs with -9999, multiply real values by image scalar
             im_mask.data[i] = np.where(~np.isnan(im_mask.data[i]), im_mask.data[i] * im_scalar, -9999)
-        # copy metadata
-        out_meta = im_rio.meta.copy()
-        out_meta.update({'driver': 'GTiff',
-                         'width': im_mask.data[0].shape[1],
-                         'height': im_mask.data[0].shape[0],
-                         'count': 4,
-                         'dtype': 'int16',
-                         'nodata': -9999,
-                         'crs': im_rio.crs,
-                         'transform': im_rio.transform})
-        # write to file
-        with rio.open(os.path.join(out_path, im_mask_fn), mode='w',**out_meta) as dst:
-            # write bands - multiply bands by im_scalar and convert datatype to int16 to decrease file size
-            dst.write_band(1, im_mask.data[0])
-            dst.write_band(2, im_mask.data[1])
-            dst.write_band(3, im_mask.data[2])
-            dst.write_band(4, im_mask.data[3])
+        # write to tiff file
+        im_mask.rio.to_raster(out_path + im_mask_fn)
         print('masked image saved to file: ' + out_path + im_mask_fn)
+
+        # copy metadata
+#        out_meta = im.rio.meta.copy()
+#        out_meta.update({'driver': 'GTiff',
+#                         'width': im_mask.data[0].shape[1],
+#                         'height': im_mask.data[0].shape[0],
+#                         'count': 4,
+#                         'dtype': 'int16',
+#                         'nodata': -9999,
+#                         'crs': im.rio.crs,
+#                         'transform': im.rio.transform()})
+#        # write to file
+#        with rio.open(os.path.join(out_path, im_mask_fn), mode='w',**out_meta) as dst:
+#            # write bands - multiply bands by im_scalar and convert datatype to int16 to decrease file size
+#            dst.write_band(1, im_mask.data[0])
+#            dst.write_band(2, im_mask.data[1])
+#            dst.write_band(3, im_mask.data[2])
+#            dst.write_band(4, im_mask.data[3])
         
     # -----Plot results
     if plot_results:
@@ -857,7 +861,7 @@ def apply_hillshade_correction(crs, polygon, im_fn, im_path, DEM, out_path, skip
     return im_corrected_name
 
 # --------------------------------------------------
-def create_AOI_elev_polys(AOI, im_path, im_fns, DEM, DEM_rio):
+def create_AOI_elev_polys(AOI, im_path, im_fns, DEM):
     '''
     Function to generate a polygon of the top 20th and bottom percentile elevations
     within the defined Area of Interest (AOI).
@@ -872,8 +876,6 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM, DEM_rio):
         image file names located in im_path.
     DEM: xarray.DataSet
         digital elevation model
-    DEM_rio: rasterio.DatasetReader
-        digital elevation model opened using rasterio (to access the transform for masking)
 
     Returns
     ----------
@@ -912,7 +914,7 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM, DEM_rio):
     # -----Mask the DEM outside the AOI exterior
     mask_AOI = rio.features.geometry_mask(AOI.geometry,
                                   out_shape=(len(DEM.y), len(DEM.x)),
-                                  transform=DEM_rio.transform,
+                                  transform=DEM.rio.transform(),
                                   invert=True)
     # convert maskto xarray DataArray
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
@@ -949,7 +951,7 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM, DEM_rio):
 
 
 # --------------------------------------------------
-def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_path, skip_clipped, plot_results):
+def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, out_path, skip_clipped, plot_results):
     '''
     Adjust PlanetScope image band radiometry using the band values in a defined snow-covered area (SCA) and the expected surface reflectance of snow.
 
@@ -963,6 +965,8 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
         polygon of the top 20th percentile of elevations in the AOI
     polygon_bottom: shapely.geometry.polygon.Polygon
         polygon of the bottom 20th percentile of elevations in the AOI
+    AOI:
+    
     out_path: str
         path in directory where adjusted image file will be saved
     skip_clipped: bool
@@ -1004,19 +1008,39 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
     else:
 
         # -----Load input image
-        im_rxr = rxr.open_rasterio(os.path.join(im_path, im_fn))
-        im_rio = rio.open(im_path + im_fn)
+        im = rxr.open_rasterio(os.path.join(im_path, im_fn))
+        im_rio = rio.open(os.path.join(im_path, im_fn))
         # set no data values to NaN
-        im_rxr = im_rxr.where(im_rxr!=-9999)
+        im = im.where(im!=-9999)
         # account for image scalar multiplier if necessary
         im_scalar = 10000
-        if np.nanmean(im_rxr.data[2]) > 1e3:
-            im_rxr = im_rxr / im_scalar
+        if np.nanmean(im.data[2]) > 1e3:
+            im = im / im_scalar
+            
+        # -----Return if image does not contain real values in 75% of the AOI
+        # clip image to AOI
+        AOI_clip_region = Polygon([[AOI.bounds.minx[0], AOI.bounds.miny[0]],
+                                   [AOI.bounds.maxx[0], AOI.bounds.miny[0]],
+                                   [AOI.bounds.maxx[0], AOI.bounds.maxy[0]],
+                                   [AOI.bounds.minx[0], AOI.bounds.maxy[0]],
+                                   [AOI.bounds.minx[0], AOI.bounds.miny[0]]])
+        im_AOI = im.rio.clip([AOI_clip_region], im.rio.crs)
+        # count number of pixels in image
+        npx = len(np.ravel(im_AOI.data[0]))
+        # count number of non-NaN pixels in image
+        npx_real = len(np.ravel(np.where(~np.isnan(im_AOI.data[0]))))
+        # percentage of non-NaN pixels in image
+        p_real = npx_real / npx
+        # skip if p_real < 0.75
+        if p_real < 0.75:
+            print('< 75% data coverage in the AOI, skipping...')
+            return 'N/A', 'N/A'
+            
         # define bands
-        b = im_rxr.data[0]
-        g = im_rxr.data[1]
-        r = im_rxr.data[2]
-        nir = im_rxr.data[3]
+        b = im.data[0]
+        g = im.data[1]
+        r = im.data[2]
+        nir = im.data[3]
 
         # -----Return if image bands are likely clipped
         if skip_clipped==True:
@@ -1024,26 +1048,26 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
                 print('image bands appear clipped... skipping.')
                 im_adj_fn = 'N/A'
                 return im_adj_fn
-
-        # -----Return if image does not contain polygon
+            
+        # -----Return if image does not contain polygons
         # mask the image using polygon geometries
         mask_top = rio.features.geometry_mask([polygon_top],
                                        np.shape(b),
-                                       im_rio.transform,
+                                       im.rio.transform(),
                                        all_touched=False,
                                        invert=False)
         mask_bottom = rio.features.geometry_mask([polygon_bottom],
                                        np.shape(b),
-                                       im_rio.transform,
+                                       im.rio.transform(),
                                        all_touched=False,
                                        invert=False)
-        # skip if image does not contain polygon
+        # skip if image does not contain both polygons
         if (0 not in mask_top.flatten()) or (0 not in mask_bottom.flatten()):
             print('image does not contain polygons... skipping.')
             im_adj_fn, im_adj_method = 'N/A', 'N/A'
             return im_adj_fn, im_adj_method
 
-        # -----Return if no real values exist within the SCA
+        # -----Return if no real values exist within the polygons
         if (np.nanmean(b)==0) or (np.isnan(np.nanmean(b))):
             print('image does not contain any real values within the polygon... skipping.')
             im_adj_fn, im_adj_method = 'N/A', 'N/A'
@@ -1151,7 +1175,7 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
                          'count': 4,
                          'dtype': 'int16',
                          'crs': im_rio.crs,
-                         'transform': im_rio.transform})
+                         'transform': im.rio.transform()})
         # write to file
         with rio.open(os.path.join(out_path, im_adj_fn), mode='w',**out_meta) as dst:
             # write bands - multiply bands by im_scalar and convert datatype to int16 to decrease file size
@@ -1166,8 +1190,8 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
         fig, ((ax1, ax2),(ax3,ax4)) = plt.subplots(2,2, figsize=(16,12), gridspec_kw={'height_ratios': [3, 1]})
         plt.rcParams.update({'font.size': 12, 'font.serif': 'Arial'})
         # original image
-        im_original = ax1.imshow(np.dstack([im_rxr.data[2], im_rxr.data[1], im_rxr.data[0]]),
-                    extent=(np.min(im_rxr.x.data)/1e3, np.max(im_rxr.x.data)/1e3, np.min(im_rxr.y.data)/1e3, np.max(im_rxr.y.data)/1e3))
+        im_original = ax1.imshow(np.dstack([im.data[2], im.data[1], im.data[0]]),
+                    extent=(np.min(im.x.data)/1e3, np.max(im.x.data)/1e3, np.min(im.y.data)/1e3, np.max(im.y.data)/1e3))
         count=0
 #        for geom in polygon_top.geoms:
 #            xs, ys = geom.exterior.xy
@@ -1189,8 +1213,8 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, out_pat
         ax1.set_title('Raw image')
         # adjusted image
         ax2.imshow(np.dstack([r_adj, g_adj, b_adj]),
-            extent=(np.min(im_rxr.x.data)/1e3, np.max(im_rxr.x.data)/1e3,
-                    np.min(im_rxr.y.data)/1e3, np.max(im_rxr.y.data)/1e3))
+            extent=(np.min(im.x.data)/1e3, np.max(im.x.data)/1e3,
+                    np.min(im.y.data)/1e3, np.max(im.y.data)/1e3))
         count=0
         ax2.set_xlabel('Easting [km]')
         ax2.set_title('Adjusted image')
@@ -1468,7 +1492,7 @@ def classify_image(im_fn, im_path, clf, feature_cols, crop_to_AOI, AOI, out_path
 
     # -----Open input image
     im = rxr.open_rasterio(os.path.join(im_path, im_fn)) # open image as xarray.DataArray
-    im_rio = rio.open(os.path.join(im_path, im_fn)) # open image as rasterio read object
+    im_rio = rio.open(os.path.join(im_path, im_fn))
     im = im.where(im!=-9999) # replace no data values with NaN
     # account for image scalar multiplier if necessary
     im_scalar = 1e4
@@ -1501,7 +1525,7 @@ def classify_image(im_fn, im_path, clf, feature_cols, crop_to_AOI, AOI, out_path
                     gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(AOI.crs.to_epsg()))
                     m = rio.features.geometry_mask(gdf.geometry,
                                                    np.shape(b),
-                                                   im_rio.transform,
+                                                   im.rio.transform(),
                                                    all_touched=False,
                                                    invert=False)
                     mask[m==0] = 1
@@ -1510,7 +1534,7 @@ def classify_image(im_fn, im_path, clf, feature_cols, crop_to_AOI, AOI, out_path
                 gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(AOI.crs.to_epsg()))
                 m = rio.features.geometry_mask(gdf.geometry,
                                                b.shape,
-                                               im_rio.transform,
+                                               im.rio.transform(),
                                                all_touched=False,
                                                invert=False)
                 mask[m==0] = 1
@@ -1556,14 +1580,14 @@ def classify_image(im_fn, im_path, clf, feature_cols, crop_to_AOI, AOI, out_path
                       dtype='int16',
                       count=1,
                       crs=im_rio.crs,
-                      transform=im_rio.transform) as dst:
+                      transform=im.rio.transform()) as dst:
             dst.write(im_classified, 1)
         print("Classified image saved to file:",im_classified_fn)
 
     return im_classified_fn, im
 
 # --------------------------------------------------
-def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AOI, DEM, DEM_rio):
+def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AOI, DEM):
     '''
     Parameters
     ----------
@@ -1593,13 +1617,12 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     '''
 
     # -----Open images
-    # VNIR image
+    # image
     im = rxr.open_rasterio(os.path.join(im_path, im_fn)) # open image as xarray.DataArray
     im = im.where(im!=-9999) # remove no data values
     if np.nanmean(im) > 1e3:
         im = im / 1e4 # account for surface reflectance scalar multiplier
     date = im_fn[0:8] # grab image capture date from file name
-
     # classified image
     im_classified = rxr.open_rasterio(im_classified_path + im_classified_fn) # open image as xarray.DataArray
     # create no data mask
@@ -1608,7 +1631,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     no_data_polygons = []
     for s, value in rio.features.shapes(no_data_mask.astype(np.int16),
                                         mask=(no_data_mask >0),
-                                        transform=rio.open(im_path + im_fn).transform):
+                                        transform=im.rio.transform()):
         no_data_polygons.append(shape(s))
     no_data_polygons = MultiPolygon(no_data_polygons)
     # mask no data points in classified image
@@ -1618,7 +1641,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     # create AOI mask
     mask_AOI = rio.features.geometry_mask(AOI.geometry,
                                       out_shape=(len(DEM.y), len(DEM.x)),
-                                      transform=DEM_rio.transform,
+                                      transform=DEM.rio.transform(),
                                       invert=True)
     # convert mask to xarray DataArray
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
@@ -1649,11 +1672,12 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
 
     # -----Make all pixels at elevations >75% snow coverage snow
     # determine elevation with > 75% snow coverage
-    if len(np.where(H_snow_est_elev_norm > 0.75)) > 1:
+    if len(np.where(H_snow_est_elev_norm > 0.75)[0]) > 1:
         elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
         # set all pixels above the elev_75_snow to snow (1)
         im_classified_adj = xr.where(DEM_AOI_interp.elevation > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
         im_classified_adj = im_classified_adj.squeeze(drop=True) # drop unecessary dimensions
+        H_snow_est_elev_norm[bin_centers >= elev_75_snow] = 1
     else:
         im_classified_adj = im_classified.squeeze(drop=True)
 
@@ -1736,7 +1760,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
         isplit.append(len(points)) # add ending point to complete the last line
         sl_est_split = [] # initialize split lines
         # loop through split indices
-        if isplit:
+        if len(isplit) > 1:
             for i, p in enumerate(isplit[:-1]):
                 if isplit[i+1]-isplit[i] > 1: # must have at least two points to make a line
                     line = LineString(points[isplit[i]:isplit[i+1]])
@@ -1762,7 +1786,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
 
     # -----Plot results
     contour = None
-    fig, ax, sl_points_AOI = plot_im_classified_histogram_contour(im, im_classified_adj, DEM, DEM_rio, AOI, contour)
+    fig, ax, sl_points_AOI = plot_im_classified_histogram_contour(im, im_classified_adj, DEM, AOI, contour)
     # plot estimated snow line coordinates
     if sl_est_split!=None:
         for i, line  in enumerate(sl_est_split):
