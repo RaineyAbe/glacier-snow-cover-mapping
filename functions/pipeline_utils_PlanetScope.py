@@ -1614,8 +1614,8 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
         list of shapely LineStrings representing the delineated snowlines
     sl_est_elev: list
         list of floats representing the elevation at each snowline coordinate interpolated using the DEM
-    '''
-
+    '''    
+    
     # -----Open images
     # image
     im = rxr.open_rasterio(os.path.join(im_path, im_fn)) # open image as xarray.DataArray
