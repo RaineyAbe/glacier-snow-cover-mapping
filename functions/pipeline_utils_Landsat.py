@@ -108,21 +108,172 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
     L_clip = L.map(clip_image).select(L_band_names)
     # convert image collection to xarray Dataset
     L_xr = L_clip.wx.to_xarray(scale=30, crs='EPSG:4326')
-    # transform to UTM CRS
+    # reproject to UTM CRS
     L_xr = L_xr.rio.reproject('EPSG:'+epsg_UTM)
     # replace no data values with NaN
     for band in L_band_names:
         L_xr[band] = L_xr[band].where(L_xr[band] != ds_dict['no_data_value'])
     # account for image scalar
     for band in L_band_names[0:-1]:
-        L_xr[band] = L_xr[band] * ds_dict['SR_scalar']
+        L_xr[band] = L_xr[band] / ds_dict['SR_scalar']
     # Add NDSI band
     NDSI_bands = ds_dict['NDSI']
     L_xr['NDSI'] = ((L_xr[NDSI_bands[0]] - L_xr[NDSI_bands[1]]) / (L_xr[NDSI_bands[0]] + L_xr[NDSI_bands[1]]))
     
     return L_xr
 
+# --------------------------------------------------
+def query_GEE_for_Sentinel2_SR(AOI, date_start, date_end, month_start, month_end, cloud_cover_max, ds_dict):
+    '''
+    Query GEE for Sentinel-2 surface reflectance (SR) imagery and apply a mask for clouds and shadows. Cloud masking method using s2cloudless adapted from: https://developers.google.com/earth-engine/tutorials/community/sentinel-2-s2cloudless
     
+    Parameters
+    ----------
+    AOI: geopandas.geodataframe.GeoDataFrame
+        area of interest
+    date_start: str
+        start date for image search
+    date_end: str
+        end date for image search
+    month_start: str
+        starting month for calendar range filtering
+    month_end: str
+        ending month for calendar range filtering
+    cloud_cover max: float
+        maximum cloud cover filter (0 - 100)
+    ds_dict: dict
+        dictionary of dataset-specific parameters
+        
+    Returns
+    ----------
+    S2_xr: xarray.Dataset
+        Sentinel-2 image collection, masked for clouds and shadows
+        
+    
+    '''
+    # -----Reformat AOI for image filtering
+    # reproject AOI to WGS
+    AOI_WGS = AOI.to_crs(4326)
+    # solve for optimal UTM zone
+    AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
+                    AOI_WGS.geometry[0].centroid.xy[1][0]]
+    epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
+    # reformat AOI for clipping images
+    AOI_WGS_bb_ee = ee.Geometry.Polygon(
+                            [[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
+                              [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
+                              [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
+                              [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
+                              [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
+                            ])
+
+    def clip_image(im):
+        return im.clip(AOI_WGS_bb_ee.buffer(1000))
+        
+    # -----Query GEE for imagery
+    S2 = (ee.ImageCollection("COPERNICUS/S2_SR")
+             .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_cover_max))
+             .filterDate(ee.Date(date_start), ee.Date(date_end))
+             .filter(ee.Filter.calendarRange(month_start, month_end, 'month'))
+             .filterBounds(AOI_WGS_bb_ee))
+    #  clip images to AOI and select bands
+    S2_band_names = ['B2', 'B3', 'B4', 'B5', 'B6', 'B8', 'B11', 'B12']
+    S2_clip = S2.map(clip_image).select(S2_band_names)
+
+    # -----Apply cloud and shadow mask
+    # define thresholds for cloud mask
+    CLD_PRB_THRESH = 50
+    NIR_DRK_THRESH = 0.15
+    CLD_PRJ_DIST = 1
+    BUFFER = 50
+    # Import and filter s2cloudless
+    S2_cloudless = (ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+        .filterBounds(AOI_WGS_bb_ee)
+        .filterDate(date_start, date_end))
+    # clip to AOI
+    S2_cloudless_clip = S2_cloudless.map(clip_image)
+    # Join the filtered s2cloudless collection to the SR collection by the 'system:index' property.
+    S2_merge = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply(**{
+        'primary': S2_clip,
+        'secondary': S2_cloudless_clip,
+        'condition': ee.Filter.equals(**{
+            'leftField': 'system:index',
+            'rightField': 'system:index'
+        })
+    }))
+    
+    def add_cloud_bands(img):
+        # Get s2cloudless image, subset the probability band.
+        cld_prb = ee.Image(img.get('s2cloudless')).select('probability')
+        # Condition s2cloudless by the probability threshold value.
+        is_cloud = cld_prb.gt(CLD_PRB_THRESH).rename('clouds')
+        # Add the cloud probability layer and cloud mask as image bands.
+        return img.addBands(ee.Image([cld_prb, is_cloud]))
+        
+    def add_shadow_bands(img):
+        # Identify water pixels from the clouds band.
+        not_water = img.select('clouds').neq(6)
+        # Identify dark NIR pixels that are not water (potential cloud shadow pixels).
+        SR_BAND_SCALE = 1e4
+        dark_pixels = img.select('B8').lt(NIR_DRK_THRESH*SR_BAND_SCALE).multiply(not_water).rename('dark_pixels')
+        # Determine the direction to project cloud shadow from clouds (assumes UTM projection).
+        shadow_azimuth = ee.Number(90).subtract(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')));
+        # Project shadows from clouds for the distance specified by the CLD_PRJ_DIST input.
+        cld_proj = (img.select('probability').directionalDistanceTransform(shadow_azimuth, CLD_PRJ_DIST*10)
+            .reproject(**{'crs': img.select(0).projection(), 'scale': 100})
+            .select('distance')
+            .mask()
+            .rename('cloud_transform'))
+        # Identify the intersection of dark pixels with cloud shadow projection.
+        shadows = cld_proj.multiply(dark_pixels).rename('shadows')
+        # Add dark pixels, cloud projection, and identified shadows as image bands.
+        return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
+
+    def add_cld_shdw_mask(img):
+        # Add cloud component bands.
+        img_cloud = add_cloud_bands(img)
+        # Add cloud shadow component bands.
+        img_cloud_shadow = add_shadow_bands(img_cloud)
+        # Combine cloud and shadow mask, set cloud and shadow as value 1, else 0.
+        is_cld_shdw = img_cloud_shadow.select('clouds').add(img_cloud_shadow.select('shadows')).gt(0)
+        # Remove small cloud-shadow patches and dilate remaining pixels by BUFFER input.
+        # 20 m scale is for speed, and assumes clouds don't require 10 m precision.
+        is_cld_shdw = (is_cld_shdw.focalMin(2).focalMax(BUFFER*2/20)
+            .reproject(**{'crs': img.select([0]).projection(), 'scale': 20})
+            .rename('cloudmask'))
+        # Add the final cloud-shadow mask to the image.
+        return img_cloud_shadow.addBands(is_cld_shdw)
+        
+    def apply_cld_shdw_mask(img):
+        # Subset the cloudmask band and invert it so clouds/shadow are 0, else 1.
+        not_cld_shdw = img.select('cloudmask').Not()
+        # Subset reflectance bands and update their masks, return the result.
+        return img.select('B.*').updateMask(not_cld_shdw)
+
+    # -----Add bands for clouds, shadows, mask, and apply the mask
+    S2_merge_masked = (S2_merge.map(add_cloud_bands)
+                               .map(add_shadow_bands)
+                               .map(add_cld_shdw_mask)
+                               .map(apply_cld_shdw_mask))
+
+    # -----Convert image collection to xarray Dataset
+    S2_xr = S2_merge_masked.wx.to_xarray(scale=10, crs='EPSG:4326')
+    # transform to UTM CRS
+    S2_xr = S2_xr.rio.reproject('EPSG:'+epsg_UTM)
+    # replace no data values with NaN
+    for band in S2_band_names:
+        S2_xr[band] = S2_xr[band].where(S2_xr[band] != ds_dict['no_data_value'])
+    # account for image scalar
+    for band in S2_band_names:
+        S2_xr[band] = S2_xr[band] / ds_dict['SR_scalar']
+        
+    # -----Add NDSI band
+    NDSI_bands = ds_dict['NDSI']
+    S2_xr['NDSI'] = ((S2_xr[NDSI_bands[0]] - S2_xr[NDSI_bands[1]]) / (S2_xr[NDSI_bands[0]] + S2_xr[NDSI_bands[1]]))
+
+    return S2_xr
+
+
 # --------------------------------------------------
 def plot_im_classified_histogram_contour(im, im_classified, DEM, AOI, contour):
     '''
@@ -635,7 +786,7 @@ def Landsat_delineate_snow_line(im_collection, im_collection_classified, date_st
     
     site_name:
     
-    AOI: geopandas.GeoDataFrame
+    AOI: geopandas.geodataframe.GeoDataFrame
         area of interest
     DEM: xarray.DataSet
         digital elevation model used to extract elevations of the delineated snow line
