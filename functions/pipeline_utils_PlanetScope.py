@@ -1587,7 +1587,7 @@ def classify_image(im_fn, im_path, clf, feature_cols, crop_to_AOI, AOI, out_path
     return im_classified_fn, im
 
 # --------------------------------------------------
-def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AOI, DEM):
+def delineate_snow_line(out_path, site_name, im_date, im_fn, im_path, im_classified_fn, im_classified_path, AOI, DEM):
     '''
     Parameters
     ----------
@@ -1615,7 +1615,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     sl_est_elev: list
         list of floats representing the elevation at each snowline coordinate interpolated using the DEM
     '''    
-    
+
     # -----Open images
     # image
     im = rxr.open_rasterio(os.path.join(im_path, im_fn)) # open image as xarray.DataArray
@@ -1625,8 +1625,10 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     date = im_fn[0:8] # grab image capture date from file name
     # classified image
     im_classified = rxr.open_rasterio(im_classified_path + im_classified_fn) # open image as xarray.DataArray
-    # create no data mask
-    no_data_mask = xr.where(im_classified==-9999, 1, 0).data[0]
+    im_classified = im_classified.where(~np.isnan(im_classified))
+    
+    # -----Create no data mask
+    no_data_mask = xr.where(np.isnan(im_classified), 1, 0).data[0]
     # convert to polygons
     no_data_polygons = []
     for s, value in rio.features.shapes(no_data_mask.astype(np.int16),
@@ -1634,8 +1636,6 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
                                         transform=im.rio.transform()):
         no_data_polygons.append(shape(s))
     no_data_polygons = MultiPolygon(no_data_polygons)
-    # mask no data points in classified image
-    im_classified = im_classified.where(im_classified!=-9999) # now, remove no data values
 
     # -----Mask the DEM using the AOI
     # create AOI mask
@@ -1646,8 +1646,9 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     # convert mask to xarray DataArray
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
     # mask DEM values outside the AOI
-    DEM_AOI = DEM.where(mask_AOI == True)
-
+    DEM_AOI = DEM.copy(deep=True)
+    DEM_AOI.elevation.data = np.where(mask_AOI==True, DEM_AOI.elevation.data, np.nan)
+    
     # -----Interpolate DEM to the image coordinates
     im_classified = im_classified.squeeze(drop=True) # remove unecessary dimensions
     x, y = im_classified.indexes.values() # grab indices of image
@@ -1807,7 +1808,7 @@ def delineate_snow_line(im_fn, im_path, im_classified_fn, im_classified_path, AO
     if contour is not None:
         ax[3].set_title('Contour = ' + str(np.round(contour,1)) + ' m')
     fig.suptitle(date)
-
+        
     return fig, ax, sl_est_split, sl_est_elev
 
 
