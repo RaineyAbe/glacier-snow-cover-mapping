@@ -28,18 +28,18 @@ import argparse
 import os
 import numpy as np
 import glob
-import subprocess
-from matplotlib.patches import Rectangle
-from matplotlib import pyplot as plt, dates
 import rasterio as rio
-import rioxarray as rxr
 import xarray as xr
-from scipy import stats
+import rioxarray as rxr
 import pandas as pd
 import geopandas as gpd
 import sys
+import time
 import ee
 import pickle
+from time import mktime
+from matplotlib import pyplot as plt, dates
+import matplotlib
 from PIL import Image as PIL_Image
 from IPython.display import Image as IPy_Image
 
@@ -107,6 +107,7 @@ if len(DEM_fn_full)<1:
 # -----Add path to functions
 sys.path.insert(1, base_path+'functions/')
 import pipeline_utils_PlanetScope as pf
+import pipeline_utils_LSM as lf
 
 # -----Load AOI as GeoPandas.DataFrame
 AOI_fn = glob.glob(AOI_path + AOI_fn)[0]
@@ -115,7 +116,7 @@ AOI = gpd.read_file(AOI_fn)
 AOI_WGS = AOI.to_crs(4326)
 AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
                     AOI_WGS.geometry[0].centroid.xy[1][0]]
-epsg_UTM = pf.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
+epsg_UTM = lf.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
 AOI_UTM = AOI.to_crs(str(epsg_UTM))
 
 # -----Load DEM as xarray DataSet
@@ -125,13 +126,19 @@ DEM = DEM.rename({'band_data': 'elevation'})
 # reproject to the optimal UTM zone
 DEM = DEM.rio.reproject(str('EPSG:'+epsg_UTM))
 
+# -----Load dataset dictionary
+with open(base_path + 'inputs-outputs/datasets_characteristics.pkl', 'rb') as fn:
+    dataset_dict = pickle.load(fn)
+dataset = 'PlanetScope'
+ds_dict = dataset_dict[dataset]
+
 # -----Set paths for output files
-im_mask_path = os.path.join(out_path, 'masked/')
-im_mosaic_path = os.path.join(out_path, 'mosaics/')
-im_adj_path = os.path.join(out_path, 'adjusted/')
-im_classified_path = os.path.join(out_path, 'classified/')
-snowlines_path = os.path.join(out_path, 'snowlines/')
-figures_out_path = os.path.join(out_path, '../../figures/')
+im_masked_path = out_path + 'masked/'
+im_mosaics_path = out_path + 'mosaics/'
+im_adjusted_path = out_path + 'adjusted/'
+im_classified_path = out_path + 'classified/'
+snowlines_path = out_path + 'snowlines/'
+figures_out_path = out_path + '../../figures/'
 
 
 # ---------------------------------
@@ -141,7 +148,7 @@ plot_results=False
 if 1 in steps_to_run:
 
     print('--------------------------')
-    print('1. Masking pixels using UDM')
+    print('1. Masking pixels using UDM/UDM2')
     print('--------------------------')
 
     # -----Read surface reflectance file names
@@ -154,7 +161,7 @@ if 1 in steps_to_run:
         
         print(im_fn)
 
-        pf.mask_im_pixels(im_path, im_fn, im_mask_path, save_outputs, plot_results)
+        pf.mask_im_pixels(im_path, im_fn, im_masked_path, save_outputs, plot_results)
         print(' ')
 
 # ----------------------------------
@@ -167,12 +174,12 @@ if 2 in steps_to_run:
     print('--------------------------')
 
     # -----Read masked image file names
-    os.chdir(im_mask_path)
+    os.chdir(im_masked_path)
     im_mask_fns = glob.glob('*_mask.tif')
     im_mask_fns = sorted(im_mask_fns) # sort chronologically
 
     # ----Mosaic images by date
-    pf.mosaic_ims_by_date(im_mask_path, im_mask_fns, im_mosaic_path, AOI_UTM, plot_results)
+    pf.mosaic_ims_by_date(im_masked_path, im_mask_fns, im_mosaics_path, AOI_UTM, plot_results)
 
 
 # ------------------------------------
@@ -180,7 +187,7 @@ if 2 in steps_to_run:
 # ------------------------------------
 
 # -----Read image mosaic file names
-os.chdir(im_mosaic_path)
+os.chdir(im_mosaics_path)
 im_mosaic_fns = glob.glob('*.tif')
 im_mosaic_fns = sorted(im_mosaic_fns)
     
@@ -191,7 +198,7 @@ if 3 in steps_to_run:
     print('--------------------------')
 
     # -----Create a polygon(s) of the top 20th percentile elevations within the AOI
-    polygon_top, polygon_bottom, im_mosaic_fn, im_mosaic = pf.create_AOI_elev_polys(AOI_UTM, im_mosaic_path, im_mosaic_fns, DEM)
+    polygon_top, polygon_bottom, im_mosaic_fn, im_mosaic = pf.create_AOI_elev_polys(AOI_UTM, im_mosaics_path, im_mosaic_fns, DEM)
 
     # -----Loop through images
     for im_mosaic_fn in im_mosaic_fns:
@@ -200,7 +207,7 @@ if 3 in steps_to_run:
         print(im_mosaic_fn)
         # adjust radiometry
         plot_results=False
-        im_adj_fn, im_adj_method = pf.adjust_image_radiometry(im_mosaic_fn, im_mosaic_path, polygon_top, polygon_bottom, AOI_UTM, im_adj_path, skip_clipped, plot_results)
+        im_adj_fn, im_adj_method = pf.adjust_image_radiometry(im_mosaic_fn, im_mosaics_path, polygon_top, polygon_bottom, AOI_UTM, ds_dict, dataset, site_name, im_adjusted_path, skip_clipped, plot_results)
         print('image adjustment method = ' + im_adj_method)
         print(' ')
 
@@ -213,41 +220,31 @@ if 4 in steps_to_run:
     print('4. Classifying images')
     print('--------------------------')
 
-    # -----Read adjusted image file names
-    os.chdir(im_adj_path)
-    im_adj_fns = glob.glob('*.tif')
-    im_adj_fns.sort()
-
-    # -----Load image classifier and feature columns
-    clf_fn = base_path + 'inputs-outputs/PS_classifier_all_sites.sav'
+    # -----Load trained classifier and feature columns
+    clf_fn = base_path+'inputs-outputs/PS_classifier_all_sites.sav'
     clf = pickle.load(open(clf_fn, 'rb'))
-    feature_cols_fn = base_path + 'inputs-outputs/PS_feature_cols.pkl'
+    feature_cols_fn = base_path+'inputs-outputs/PS_feature_cols.pkl'
     feature_cols = pickle.load(open(feature_cols_fn,'rb'))
 
-    # -----Loop through images
-    # image datetimes
-    im_dts = []
-    # DataFrame to hold stats summary
-    df = pd.DataFrame(columns=('site_name', 'datetime', 'im_elev_min', 'im_elev_max', 'snow_elev_min', 'snow_elev_max',
-                               'snow_elev_median', 'snow_elev_10th_perc', 'snow_elev_90th_perc'))
-    for im_adj_fn in im_adj_fns:
+    # -----Read masked images
+    # im_adjusted_fns = glob.glob(im_adjusted_path + '*_adj.nc')
+    im_adjusted_fns = glob.glob(im_adjusted_path + '*_adj.nc')
 
-        print(im_adj_fn[0:8])
+    im_adjusted_fns = sorted(im_adjusted_fns) # sort chronologically
 
-        # extract datetime from image name
-        im_dt = np.datetime64(im_adj_fn[0:4] + '-' + im_adj_fn[4:6] + '-' + im_adj_fn[6:8] + 'T' + im_adj_fn[9:11] + ':00:00')
-        im_dts = im_dts + [im_dt]
-
-        # classify snow
-        try:
-            im_classified_fn, im_adj = pf.classify_image(im_adj_fn, im_adj_path,
-                                                         clf, feature_cols, crop_to_AOI, AOI_UTM, im_classified_path)
-        except:
-            print('error occured during classification, skipping...')
-            continue
-        
+    # -----Loop through masked image files
+    for im_adjusted_fn in im_adjusted_fns:
+        # load file
+        im_adjusted = xr.open_dataset(im_adjusted_fn)
+        # classify images
+        plot_results=True
+        im_classified = lf.classify_image(im_adjusted, clf, feature_cols,
+                                          crop_to_AOI, AOI, ds_dict, dataset,
+                                          site_name, im_classified_path, plot_results,
+                                          figures_out_path)
         print(' ')
-
+    
+    
 # ---------------------------------
 # ---  5. Delineate snow lines  ---
 # ---------------------------------
@@ -257,128 +254,121 @@ if 5 in steps_to_run:
     print('5. Delineating snow lines')
     print('--------------------------')
 
-    # -----Read classified image file names
-    os.chdir(im_classified_path)
-    im_classified_fns = glob.glob('*.tif')
-    im_classified_fns = sorted(im_classified_fns)
+    # -----Read image file names
+    # adjusted images
+    im_adjusted_fns = glob.glob(im_adjusted_path + '*_adj.nc')
+    im_adjusted_fns = sorted(im_adjusted_fns) # sort chronologically
+    # classified images
+    im_classified_fns = glob.glob(im_classified_path + '*_classified.nc')
+    im_classified_fns = sorted(im_classified_fns) # sort chronologically
 
-    # -----Create directories for outputs if they do not exist
-    # snowlines folder
-    if save_outputs and os.path.exists(snowlines_path)==False:
-        os.mkdir(snowlines_path)
-        print('made directory for output snowlines:' + snowlines_path)
-        print(' ')
-    # figures folder
-    if os.path.exists(figures_out_path)==False:
-        os.mkdir(figures_out_path)
-        print('made directory for output figures:' + figures_out_path)
-        print(' ')
-
-    # -----Loop through classified image filenames
+    # -----Initialize snowlines data frame
+    snowlines_df = pd.DataFrame(columns=['study_site', 'datetime', 'snowlines_coords', 'snowlines_elevs', 'snowlines_elevs_median'])
+    
+    # -----Loop through classified images
     for im_classified_fn in im_classified_fns:
             
-        # extract datetime from image file name
-        im_date = im_classified_fn[0:11]
-        print(im_date)
-        im_dt = np.datetime64(im_classified_fn[0:4] + '-' + im_classified_fn[4:6] + '-' + im_classified_fn[6:8] + 'T' + im_classified_fn[9:11] + ':00:00')
-
-        # check if snowline already exists in file
-        snowline_fn = site_name + '_' + im_date + '_snowline.pkl'
-        print(snowline_fn)
-        if os.path.exists(snowlines_path + snowline_fn):
-            print("snowline already exists in file, continuing...")
-            continue
-            
-        # load adjusted image from the same date
-        os.chdir(im_adj_path)
-        im_adj_fn = glob.glob(im_date + '*.tif')[0]
-
-        # delineate estimated snow line
-#        try:
-        fig, ax, sl_est, sl_est_elev = pf.delineate_snow_line(im_adj_fn, im_adj_path, im_classified_fn, im_classified_path, AOI_UTM, DEM)
-
-        # calculate median snow line elevation
-        sl_est_elev_median = np.nanmedian(sl_est_elev)
-
-        # save figure
-        fig.savefig(figures_out_path + 'PlanetScope_' + im_date + '_SCA.png', dpi=300, facecolor='white', edgecolor='none')
-        print('figure saved to file')
-
-        # compile result in df
-        result_df = pd.DataFrame({'study_site': site_name,
-                                  'datetime': im_dt,
-                                  'snowlines_coords': [sl_est],
-                                  'snowlines_elevs': [sl_est_elev],
-                                  'snowlines_elevs_median': sl_est_elev_median})
+        # load classified file
+        im_classified = xr.open_dataset(im_classified_fn)
+        im_dt = im_classified_fn.split(site_name+'_')[1][0:15]
+        print(im_dt)
         
+        # check if snowline exists in directory already
+        snowline_fn = dataset + '_' + site_name + '_' + im_dt + '_snowline.pkl'
+        if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
+            print('snowline already exist in file, loading...')
+            snowline_df = pickle.load(open(snowlines_path + snowline_fn,'rb'))
+        else:
+            # load masked image file
+            im_adjusted_fn = [x for x in im_adjusted_fns if (im_dt in x)][0]
+            im_adjusted = xr.open_dataset(im_adjusted_fn)
+            # delineate snowline
+            snowline_df = lf.delineate_im_snowline(im_adjusted, im_classified, site_name, AOI_UTM, DEM, ds_dict, dataset, im_dt, snowlines_path, figures_out_path, plot_results)
         # save snowline to file
-        if save_outputs:
-            result_df.to_pickle(snowlines_path + snowline_fn)
-            print('results data table saved to file')
-
-#        except:
-#            print('error in snowline delineation, skipping...')
-#            pass
-
+        snowline_df.to_pickle(snowlines_path + snowline_fn)
+        print('snowline saved to file:' + snowlines_path + snowline_fn)
+        # concatenate results to snowlines_df
+        snowlines_df = pd.concat([snowlines_df, snowline_df])
         print(' ')
-
-    # -----Compile result data tables
-    # grab file names of all snow line data frames
-    os.chdir(snowlines_path)
-    df_fns = glob.glob('*.pkl')
-    # initialize full data frame
-    results_df = pd.DataFrame(columns=['study_site', 'datetime', 'snowlines_coords', 'snowlines_elevs', 'snowlines_elevs_median'])
-    # loop through data tables
-    for df_fn in df_fns:
-        # open data frame
-        result_df = pd.read_pickle(df_fn)
-        # concatenate to results_df
-        results_df = pd.concat([results_df, result_df])
-    results_df = results_df.reset_index(drop=True) # reset df row indices
-    # grab snowline start and end dates for filename
-    df_dates = [df_fn.split(site_name)[1][1:].split('_')[0] for df_fn in df_fns]
-    df_dates = sorted(df_dates)
-    sl_start_date = df_dates[0]
-    sl_end_date = df_dates[-1]
-    # save full snow lines data frame to file
-    results_df_fn = site_name + '_' + sl_start_date + '_' + sl_end_date + '_snowlines.pkl'
-    results_df.to_pickle(snowlines_path + results_df_fn)
-    print('all snowlines saved to file:' + snowlines_path + results_df_fn)
-    # delete individual snowline files
-    for df_fn in df_fns:
-        os.remove(df_fn)
-    print('individual snowline files deleted.')
     
+    # -----Save snowlines_df to file
+    date_start = im_classified_fns[0].split(site_name+'_')[1][0:8]
+    date_end = im_classified_fns[-1].split(site_name+'_')[1][0:8]
+    snowlines_fn = dataset + '_' + site_name + '_' + date_start + '_' + date_end + '_snowlines.pkl'
+    snowlines_df = snowlines_df.reset_index(drop=True)
+    snowlines_df.to_pickle(snowlines_path + snowlines_fn)
+    print('snowline timeseries compiled and saved to file:' + snowlines_path + snowlines_fn)
+
     # -----Plot median snow line elevations
-    # plot
-    fig2, ax2 = plt.subplots(figsize=(10,6))
-    ax2.plot(results_df['datetime'], results_df['snowlines_elevs_median'], '.b')
-    ax2.set_xlabel('Image capture date')
-    ax2.set_ylabel('Median snow line elevation [m]')
-    ax2.grid()
-    fig2.suptitle(site_name + ' Glacier snow line elevations')
+    if plot_results:
+        fig2, ax2 = plt.subplots(figsize=(10,6))
+        plt.rcParams.update({'font.size':12, 'font.sans-serif':'Arial'})
+        # plot snowlines
+        ax2.plot(snowlines_df['datetime'].astype(np.datetime64),
+                 snowlines_df['snowlines_elevs_median'], '.b', markersize=10)
+        ax2.set_ylabel('Median snow line elevation [m]')
+        ax2.grid()
+        # format x-axis
+        xmin, xmax = np.datetime64('2016-05-01T00:00:00'), np.datetime64('2022-11-01T00:00:00')
+        fmt_month = matplotlib.dates.MonthLocator(bymonth=(5, 11)) # minor ticks every month.
+        fmt_year = matplotlib.dates.YearLocator() # minor ticks every year.
+        ax2.xaxis.set_minor_formatter(matplotlib.dates.DateFormatter('%b'))
+        ax2.xaxis.set_major_locator(fmt_month)
+        ax2.xaxis.set_major_formatter(matplotlib.dates.DateFormatter('%b'))
+        # create a second x-axis beneath the first x-axis to show the year in YYYY format
+        sec_xaxis = ax2.secondary_xaxis(-0.1)
+        sec_xaxis.xaxis.set_major_locator(fmt_year)
+        sec_xaxis.xaxis.set_major_formatter(matplotlib.dates.DateFormatter('%Y'))
+        # Hide the second x-axis spines and ticks
+        sec_xaxis.spines['bottom'].set_visible(False)
+        sec_xaxis.tick_params(axis='x', length=0, pad=-10)
+        fig2.suptitle(site_name + ' Glacier median snow line elevations')
+        fig2.tight_layout()
+        plt.show()
+        # save figure
+        fig2_fn = figures_out_path + dataset + '_' + site_name + '_' + date_start.replace('-','') + '_' + date_end.replace('-','')+ '_snowline_median_elevs.png'
+        fig2.savefig(fig2_fn, dpi=300, facecolor='white', edgecolor='none')
+        print('figure saved to file:' + fig2_fn)
 
-    # save results
-    fig2.savefig(figures_out_path + site_name + '_sl_elevs_median.png',
-                 facecolor='white', edgecolor='none')
-    print('figure saved to file')
-
-    # -----Make a .gif of output images
-    os.chdir(figures_out_path)
-    fig_fns = glob.glob('PlanetScope_*_SCA.png') # load all output figure file names
-    fig_fns = sorted(fig_fns) # sort chronologically
-    # grab figures date range for .gif file name
-    fig_start_date = fig_fns[0][3:-8] # first figure date
-    fig_end_date = fig_fns[-1][3:-8] # final figure date
-    frames = [PIL_Image.open(im) for im in fig_fns]
-    frame_one = frames[0]
-    gif_fn = ('PlanetScope_' + fig_start_date[0:8] + '_' + fig_end_date[0:8] + '_SCA.gif' )
-    frame_one.save(figures_out_path + gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
-    print('GIF saved to file:' + figures_out_path + gif_fn)
-
-    # -----Clean up: delete individual figure files
-    for fig_fn in fig_fns:
-        os.remove(fig_fn)
-    print('Individual figure files deleted.')
+# -------------------------------------
+# ---  *Compile figures into .gif*  ---
+# -------------------------------------
+# -----SCA figures
+#os.chdir(figures_out_path)
+#fig_fns = glob.glob('PlanetScope_*_SCA.png') # load all output figure file names
+#if fig_fns:
+#    print('Compiling individual SCA figures into gif...')
+#    fig_fns = sorted(fig_fns) # sort chronologically
+#    # grab figures date range for .gif file name
+#    fig_start_date = fig_fns[0][3:-8] # first figure date
+#    fig_end_date = fig_fns[-1][3:-8] # final figure date
+#    frames = [PIL_Image.open(im) for im in fig_fns]
+#    frame_one = frames[0]
+#    gif_fn = ('PlanetScope_' + fig_start_date[0:8] + '_' + fig_end_date[0:8] + '_SCA.gif' )
+#    frame_one.save(figures_out_path + gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
+#    print('GIF saved to file:' + figures_out_path + gif_fn)
+#    # clean up: delete individual figure files
+#    for fig_fn in fig_fns:
+#        os.remove(fig_fn)
+#    print('Individual figure files deleted.')
+#    
+## -----Snowline figures
+#fig_fns = glob.glob('PlanetScope_*_snowline.png') # load all output figure file names
+#if fig_fns:
+#    print('Compiling individual snowline figures into .gif...')
+#    fig_fns = sorted(fig_fns) # sort chronologically
+#    # grab figures date range for .gif file name
+#    fig_start_date = fig_fns[0].sp')[3:-8] # first figure date
+#    fig_end_date = fig_fns[-1][3:-8] # final figure date
+#    frames = [PIL_Image.open(im) for im in fig_fns]
+#    frame_one = frames[0]
+#    gif_fn = ('PlanetScope_' + fig_start_date[0:8] + '_' + fig_end_date[0:8] + '_snowlines.gif' )
+#    frame_one.save(figures_out_path + gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
+#    print('GIF saved to file:' + figures_out_path + gif_fn)
+#    # clean up: delete individual figure files
+#    for fig_fn in fig_fns:
+#        os.remove(fig_fn)
+#    print('Individual figure files deleted.')
+#    print(' ')
 
 print('DONE!')

@@ -4,7 +4,7 @@
 #SBATCH -n 28                               # total number of tasks requested
 #SBATCH -N 2                                # number of nodes you want to run on
 #SBATCH -p defq                             # queue (partition)
-#SBATCH -t 12:00:00                         # run time (hh:mm:ss) - 12.0 hours in this exam$
+#SBATCH -t 24:00:00                         # run time (hh:mm:ss) - 12.0 hours in this exam$
 
 # activate conda environment
 . ~/.bashrc
@@ -30,4 +30,4 @@ python /home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/scripts/snow_
 -DEM_path $DEM_path \
 -DEM_fn $DEM_fn \
 -out_path $out_path \
--steps_to_run 3 4 5
+-steps_to_run 1 2 3 4 5

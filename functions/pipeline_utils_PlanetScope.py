@@ -951,7 +951,7 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM):
 
 
 # --------------------------------------------------
-def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, out_path, skip_clipped, plot_results):
+def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ds_dict, dataset, site_name, out_path, skip_clipped, plot_results):
     '''
     Adjust PlanetScope image band radiometry using the band values in a defined snow-covered area (SCA) and the expected surface reflectance of snow.
 
@@ -988,7 +988,11 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ou
         print('Created directory for adjusted images: ' + out_path)
 
     # -----Check if adjusted image file exist
-    im_adj_fn = im_fn[0:-4]+'_adj.tif' # adjusted image file name
+    # extract datetime from file name
+    im_dt = np.datetime64(im_fn[0:4]+'-'+im_fn[4:6]+'-'+im_fn[6:8]+'T'+im_fn[9:11]+':00:00')
+    # define output file name
+    im_adj_fn = dataset + '_' + site_name + '_' + str(im_dt).replace('-','').replace(':','') + '_adj.nc'
+    # check if it exists in out_path
     if os.path.exists(out_path + im_adj_fn)==True:
 
         print('adjusted image already exists, continuing...')
@@ -999,7 +1003,7 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ou
         im_adj = im_adj.where(im_adj!=-9999)
         # account for image scalar multiplier if necessary
         if np.nanmean(im_adj.data[2]) > 1e3:
-            im_adj = im_adj / 10000
+            im_adj = im_adj / 1e4
 
         im_adj_method = 'N/A'
 
@@ -1009,7 +1013,6 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ou
 
         # -----Load input image
         im = rxr.open_rasterio(os.path.join(im_path, im_fn))
-        im_rio = rio.open(os.path.join(im_path, im_fn))
         # set no data values to NaN
         im = im.where(im!=-9999)
         # account for image scalar multiplier if necessary
@@ -1112,7 +1115,6 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ou
             # dark point
             dark_adj = 0.0
 
-
         elif im_adj_method=='ICE':
 
             # define desired SR values at the bright area and darkest point for each band
@@ -1156,34 +1158,33 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ou
         B = (dark_nir*bright_nir_adj - bright_nir*dark_adj) / (bright_nir - dark_nir)
         nir_adj = (nir * A) - B
         nir_adj = np.where(nir==0, np.nan, nir_adj) # replace no data values with nan
-
-        # -----Save adjusted raster image to file
-        # reformat bands for saving as int data type
-        b_save = b_adj * im_scalar
-        b_save[np.isnan(b)] = -9999
-        g_save = g_adj * im_scalar
-        g_save[np.isnan(g)] = -9999
-        r_save = r_adj * im_scalar
-        r_save[np.isnan(r)] = -9999
-        nir_save = nir_adj * im_scalar
-        nir_save[np.isnan(nir)] = -9999
-        # copy metadata
-        out_meta = im_rio.meta.copy()
-        out_meta.update({'driver': 'GTiff',
-                         'width': b_save.shape[1],
-                         'height': b_save.shape[0],
-                         'count': 4,
-                         'dtype': 'int16',
-                         'crs': im_rio.crs,
-                         'transform': im.rio.transform()})
-        # write to file
-        with rio.open(os.path.join(out_path, im_adj_fn), mode='w',**out_meta) as dst:
-            # write bands - multiply bands by im_scalar and convert datatype to int16 to decrease file size
-            dst.write_band(1, b_save)
-            dst.write_band(2, g_save)
-            dst.write_band(3, r_save)
-            dst.write_band(4, nir_save)
-        print('adjusted image saved to file: ' + im_adj_fn)
+        
+        # -----Compile adjusted bands in xarray.Dataset
+        # create meshgrid of image coordinates
+        x_mesh, y_mesh = np.meshgrid(im.x.data, np.flip(im.y.data))
+        # create xarray.Dataset
+        im_adj = xr.Dataset(
+            data_vars = dict(
+                blue = (['y', 'x'], b_adj),
+                green = (['y', 'x'], g_adj),
+                red = (['y', 'x'], r_adj),
+                NIR = (['y', 'x'], nir_adj)
+            ),
+            coords=im.coords,
+            attrs = dict(
+                no_data_values = np.nan,
+                SR_scalar = 1
+            )
+        )
+        # add NDSI band
+        im_adj['NDSI'] = ((im_adj[ds_dict['NDSI'][0]] - im_adj[ds_dict['NDSI'][1]])
+                           / (im_adj[ds_dict['NDSI'][0]] + im_adj[ds_dict['NDSI'][0]]))
+        # add time dimension
+        im_adj = im_adj.expand_dims(dim={'time':[im_dt]})
+        
+        # -----Save adjusted image to file
+        im_adj.to_netcdf(out_path + im_adj_fn)
+        print('adjusted image saved to file: ' + out_path + im_adj_fn)
 
     # -----Plot RGB images and band histograms for the original and adjusted image
     if plot_results:
@@ -1192,21 +1193,6 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ou
         # original image
         im_original = ax1.imshow(np.dstack([im.data[2], im.data[1], im.data[0]]),
                     extent=(np.min(im.x.data)/1e3, np.max(im.x.data)/1e3, np.min(im.y.data)/1e3, np.max(im.y.data)/1e3))
-        count=0
-#        for geom in polygon_top.geoms:
-#            xs, ys = geom.exterior.xy
-#            if count==0:
-#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='c', label='top polygon(s)')
-#            else:
-#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='c', label='_nolegend_')
-#            count+=1
-#        for geom in polygon_bottom.geoms:
-#            xs, ys = geom.exterior.xy
-#            if count==0:
-#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='bottom polygon(s)')
-#            else:
-#                ax1.plot([x/1000 for x in xs], [y/1000 for y in ys], color='orange', label='_nolegend_')
-#            count+=1
         ax1.legend()
         ax1.set_xlabel('Easting [km]')
         ax1.set_ylabel('Northing [km]')
@@ -1237,6 +1223,7 @@ def adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, ou
         plt.show()
 
     return im_adj_fn, im_adj_method
+
 
 # --------------------------------------------------
 def query_GEE_for_DEM(AOI):

@@ -4,7 +4,7 @@
 #SBATCH -n 28                           # total number of tasks requested
 #SBATCH -N 1                            # number of nodes you want to run on
 #SBATCH -p defq                         # queue (partition)
-#SBATCH -t 12:00:00                     # run time (hh:mm:ss)
+#SBATCH -t 24:00:00                     # run time (hh:mm:ss)
 
 # activate conda environment
 . ~/.bashrc

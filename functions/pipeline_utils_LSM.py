@@ -267,28 +267,28 @@ def query_GEE_for_Sentinel2_SR(dataset, site_name, AOI, date_start, date_end, mo
                                .map(apply_cld_shdw_mask))
 
     # -----Filter image collection by coverage of the AOI
-    def getCover(image, AOI, scale):
-        # calculate the number of inputs
-        vtotPixels = ee.Number(image.unmask(1).reduceRegion({
-            reducer: ee.Reducer.count(),
-            scale: scale,
-            geometry: aoi,
-        }).values().get(0))
-        # calculate the actual amount of pixels inside the AOI
-        actPixels = ee.Number(image.reduceRegion({
-            reducer: ee.Reducer.count(),
-            scale: scale,
-            geometry: aoi,
-        }).values().get(0));
-        # calculate the percent coverage of the AOI
-        perc_AOI_cover = actPixels.divide(totPixels).multiply(100).round();
-        # add perc_cover as property
-        return image.set('perc_AOI_cover', perc_AOI_cover);
-        
-    # apply percent coverage property
-    S2_merge_masked_AOIcover = S2_merge_masked.map(function(image){return getCover(image, aoi, 7000)})
-    # filter images with < 50% coverage of the AOI
-    S2_merge
+#    def getCover(image, AOI, scale):
+#        # calculate the number of inputs
+#        vtotPixels = ee.Number(image.unmask(1).reduceRegion({
+#            reducer: ee.Reducer.count(),
+#            scale: scale,
+#            geometry: aoi,
+#        }).values().get(0))
+#        # calculate the actual amount of pixels inside the AOI
+#        actPixels = ee.Number(image.reduceRegion({
+#            reducer: ee.Reducer.count(),
+#            scale: scale,
+#            geometry: aoi,
+#        }).values().get(0));
+#        # calculate the percent coverage of the AOI
+#        perc_AOI_cover = actPixels.divide(totPixels).multiply(100).round();
+#        # add perc_cover as property
+#        return image.set('perc_AOI_cover', perc_AOI_cover);
+#
+#    # apply percent coverage property
+#    S2_merge_masked_AOIcover = S2_merge_masked.map(function(image){return getCover(image, aoi, 7000)})
+#    # filter images with < 50% coverage of the AOI
+#    S2_merge
     
     # -----Adjust and filter image collection
     print('Adjusting and filtering image collection by AOI coverage...')
@@ -995,7 +995,7 @@ def classify_image(im, clf, feature_cols, crop_to_AOI, AOI, ds_dict, dataset, si
                 
         # -----Prepare image for classification
         # find indices of real numbers (no NaNs allowed in classification)
-        ix = [np.where(np.isnan(im_AOI[band].data), False, True) for band in bands]
+        ix = [np.where((np.isfinite(im_AOI[band].data) & ~np.isnan(im_AOI[band].data)), True, False) for band in bands]
         I_real = np.full(np.shape(im_AOI[bands[0]].data), True)
         for ixx in ix:
             I_real = I_real & ixx
@@ -1072,10 +1072,10 @@ def classify_image(im, clf, feature_cols, crop_to_AOI, AOI, ds_dict, dataset, si
             ax[1].set_ylim(ymin, ymax)
             fig.suptitle(im_date)
             fig.tight_layout()
-            plt.show()
             # save figure
             fig_date = im_date.replace('-','')
-            fig_fn = figures_out_path + dataset + '_' + site_name + '_' + im_date + '_SCA.png'
+            fig_fn = (figures_out_path + dataset + '_' + site_name + '_' +
+                      im_date.replace('-','').replace(':','') + '_SCA.png')
             fig.savefig(fig_fn, dpi=300, facecolor='w')
             print('figure saved to file: ' + fig_fn)
 
@@ -1514,7 +1514,7 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, ds_dict, datas
     if os.path.exists(out_path)==False:
         os.mkdir(out_path)
         print("Made directory for snowlines:" + out_path)
-        
+                
     # -----Define image bands
     bands = [x for x in im.data_vars]
     bands = [band for band in bands if band != 'QA_PIXEL']
@@ -1543,7 +1543,7 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, ds_dict, datas
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
     # mask DEM values outside the AOI
     DEM_AOI = DEM.copy(deep=True)
-    DEM_AOI.elevation.data = np.where(mask_AOI==True, DEM_AOI.elevation.data, np.nan)
+    DEM_AOI['elevation'].data = np.where(mask_AOI==True, DEM_AOI['elevation'].data, np.nan)
 
     # -----Interpolate DEM to the image coordinates
     DEM_AOI_interp = DEM_AOI.interp(x=im_classified.x.data,
@@ -1572,7 +1572,7 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, ds_dict, datas
     if len(np.where(H_snow_est_elev_norm > 0.75)[0]) > 1:
         elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
         # set all pixels above the elev_75_snow to snow (1)
-        im_classified_adj = xr.where(DEM_AOI_interp.elevation > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
+        im_classified_adj = xr.where(DEM_AOI_interp['elevation'].isel(band=0) > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
         im_classified_adj = im_classified_adj.squeeze(drop=True) # drop unecessary dimensions
         H_snow_est_elev_norm[bin_centers >= elev_75_snow] = 1
     else:
