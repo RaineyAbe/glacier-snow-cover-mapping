@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -J Wolverine            # job name
-#SBATCH -o log_slurm.o%j        # output and error file name (%j expands to job$)
-#SBATCH -n 28                   # total number of tasks requested
-#SBATCH -N 1                    # number of nodes you want to run on
-#SBATCH -p defq                 # queue (partition)
-#SBATCH -t 12:00:00             # run time (hh:mm:ss) - 12.0 hours in this exam$
+#SBATCH -J Wolverine                        # job name
+#SBATCH -o log_slurm_Wolverine.o%j          # output and error file name (%j expands to job$)
+#SBATCH -n 28                               # total number of tasks requested
+#SBATCH -N 2                                # number of nodes you want to run on
+#SBATCH -p defq                             # queue (partition)
+#SBATCH -t 24:00:00                         # run time (hh:mm:ss) - 12.0 hours in this exam$
 
 # activate conda environment
 . ~/.bashrc
@@ -21,7 +21,7 @@ DEM_fn="${site_name}*_DEM_filled.tif"
 out_path="$im_path../"
 
 # run your code
-python /home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/scripts/PlanetScope_snow_classification_pipeline.py \
+python /home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/scripts/snow_classification_pipeline_PlanetScope.py \
 -base_path $base_path \
 -site_name $site_name \
 -im_path $im_path \

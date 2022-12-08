@@ -1,0 +1,26 @@
+name: planet-snow
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - rasterio
+  - geopandas
+  - matplotlib
+  - time
+  - earthengine-api
+  - notebook
+  - geemap
+  - scikit-image
+  - keras
+  - tensorflow
+  - planet
+  - richdem
+  - xarray
+  - wxee
+  - jupyterlab
+  - jupyterlab-git
+  - rioxarray
+  - contextily
+  - seaborn
+  - symfit
