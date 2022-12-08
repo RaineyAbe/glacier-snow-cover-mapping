@@ -4,7 +4,9 @@
 #### Contact: raineyaberle@u.boisestate.edu
 
 ### Description
-Preliminary notebooks & short workflow for detecting snow-covered area and seasonal snowlines in PlanetScope 4-band, Landsat, Sentinel-2, and MODIS imagery.
+Notebooks & short workflow for detecting snow-covered area and seasonal snowlines in PlanetScope 4-band, Landsat and Sentinel-2 imagery.
+
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/methods_workflow.png" alt="Image processing workflow" width="600"/>
 
 ### Installation
 #### 1. Clone repository
@@ -30,5 +32,20 @@ Now, run the following command in a terminal so that you can use the `planet-sno
 
 `python -m ipykernel install --user --name=snow-cover-mapping`
 
-#### 5. Open a Jupyter Notebook
-To open a jupyter notebook, navigate (`cd`) to the `snow-cover-mapping` directory on your machine if you have not already and run the following command: `jupyter notebook notebook.ipynb`, replacing `notebook.ipynb` with the name of the notebook you would like to open. The notebook should open in a browser.
+#### 5. Run the snow classification and snowline detection pipelines
+
+The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory or Python scripts -- located in the `scripts` directory. 
+
+__PlanetScope__
+- Download imagery either through Planet Explorer or using the Python API with the `download_PlanetScope_images.ipynb` notebook.
+- Run the snow classification pipeline: `snow_classification_pipeline_PlanetScope.ipynb`
+
+__Landsat 8/9 & Sentinel-2__
+- Run the `snow_classification_pipeline*.ipynb` notebooks. These require a free Google Earth Engine account to access and download imagery. 
+
+#### 6. Fit linear trendlines to annual snowline elevation timeseries using the `snowline_linear_regression.ipynb` notebook. 
+
+#### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
+
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="600"/>
+

@@ -1,4 +1,4 @@
-name: planet-snow
+name: snow-cover-mapping
 channels:
   - defaults
   - conda-forge
@@ -15,12 +15,10 @@ dependencies:
   - keras
   - tensorflow
   - planet
-  - richdem
   - xarray
   - wxee
   - jupyterlab
   - jupyterlab-git
   - rioxarray
-  - contextily
   - seaborn
   - symfit
