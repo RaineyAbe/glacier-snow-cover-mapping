@@ -5,7 +5,7 @@
 
 ### Description
 Notebooks & short workflow for detecting snow-covered area and seasonal snowlines in PlanetScope 4-band, Landsat and Sentinel-2 imagery.
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Sample snowline timeseries" width="200"/>
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="200"/>
 
 ### Installation
 #### 1. Clone repository
@@ -45,4 +45,6 @@ __Landsat 8/9 & Sentinel-2__
 #### 6. Fit linear trendlines to annual snowline elevation timeseries using the `snowline_linear_regression.ipynb` notebook. 
 
 #### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
+
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="200"/>
 
