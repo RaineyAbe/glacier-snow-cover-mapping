@@ -5,7 +5,8 @@
 
 ### Description
 Notebooks & short workflow for detecting snow-covered area and seasonal snowlines in PlanetScope 4-band, Landsat and Sentinel-2 imagery.
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="200"/>
+
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/methods_workflow.png" alt="Image processing workflow" width="600"/>
 
 ### Installation
 #### 1. Clone repository
@@ -46,5 +47,5 @@ __Landsat 8/9 & Sentinel-2__
 
 #### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
 
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="200"/>
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="600"/>
 
