@@ -24,7 +24,6 @@
 # ------  0. Setup  -------
 # -------------------------
 # -----Import packages
-import argparse
 import os
 import numpy as np
 import glob
@@ -72,6 +71,7 @@ steps_to_run = np.array(args.steps_to_run).astype(int)
 skip_clipped = args.skip_clipped
 crop_to_AOI = args.crop_to_AOI
 save_outputs = True
+plot_results=False
 
 # -----Print job to be run
 print('Site name: ' + site_name)
@@ -106,25 +106,43 @@ if len(DEM_fn_full)<1:
 
 # -----Add path to functions
 sys.path.insert(1, base_path+'functions/')
-import pipeline_utils_PlanetScope as pf
-import pipeline_utils_LSM as lf
+import pipeline_utils as f
 
 # -----Load AOI as GeoPandas.DataFrame
-AOI_fn = glob.glob(AOI_path + AOI_fn)[0]
+AOI_fn = glob.glob(AOI_fn)[0]
 AOI = gpd.read_file(AOI_fn)
-# reproject to the optimal UTM zone
-AOI_WGS = AOI.to_crs(4326)
-AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
-                    AOI_WGS.geometry[0].centroid.xy[1][0]]
-epsg_UTM = lf.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
-AOI_UTM = AOI.to_crs(str(epsg_UTM))
-
-# -----Load DEM as xarray DataSet
-DEM_fn = glob.glob(DEM_path + DEM_fn)[0]
-DEM = xr.open_dataset(DEM_fn)
-DEM = DEM.rename({'band_data': 'elevation'})
-# reproject to the optimal UTM zone
-DEM = DEM.rio.reproject(str('EPSG:'+epsg_UTM))
+    
+# -----Load DEM as Xarray DataSet
+if DEM_fn==None:
+    
+    # Authenticate and initialize Google Earth Engine
+    # Note: The first time you run this, you will be asked to authenticate your GEE account
+    # for use in this notebook. This will send you to an external web page, where you will
+    # walk through the GEE authentication workflow and copy an authentication code back
+    # in this notebook when prompted.
+    try:
+        ee.Initialize()
+    except:
+        ee.Authenticate()
+        ee.Initialize()
+    # query GEE for DEM
+    DEM, AOI_UTM = f.query_GEE_for_DEM(AOI)
+    
+else:
+    
+    # reproject the AOI to WGS to solve for the optimal UTM zone
+    AOI_WGS = AOI.to_crs(4326)
+    AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
+                        AOI_WGS.geometry[0].centroid.xy[1][0]]
+    epsg_UTM = f.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
+    # reproject AOI to UTM
+    AOI_UTM = AOI.to_crs(str(epsg_UTM))
+    # load DEM as xarray DataSet
+    DEM_fn = glob.glob(DEM_fn)[0]
+    DEM = xr.open_dataset(DEM_fn)
+    DEM = DEM.rename({'band_data': 'elevation'})
+    # reproject the DEM to the optimal UTM zone
+    DEM = DEM.rio.reproject(str('EPSG:'+epsg_UTM))
 
 # -----Load dataset dictionary
 with open(base_path + 'inputs-outputs/datasets_characteristics.pkl', 'rb') as fn:
@@ -138,7 +156,6 @@ im_mosaics_path = out_path + 'mosaics/'
 im_adjusted_path = out_path + 'adjusted/'
 im_classified_path = out_path + 'classified/'
 snowlines_path = out_path + 'snowlines/'
-figures_out_path = out_path + '../../figures/'
 
 
 # ---------------------------------
@@ -160,8 +177,7 @@ if 1 in steps_to_run:
     for im_fn in im_fns:
         
         print(im_fn)
-
-        pf.mask_im_pixels(im_path, im_fn, im_masked_path, save_outputs, plot_results)
+        f.PS_mask_im_pixels(im_path, im_fn, im_masked_path, save_outputs, plot_results)
         print(' ')
 
 # ----------------------------------
@@ -175,12 +191,11 @@ if 2 in steps_to_run:
 
     # -----Read masked image file names
     os.chdir(im_masked_path)
-    im_mask_fns = glob.glob('*_mask.tif')
-    im_mask_fns = sorted(im_mask_fns) # sort chronologically
+    im_masked_fns = glob.glob('*_mask.tif')
+    im_masked_fns = sorted(im_masked_fns) # sort chronologically
 
     # ----Mosaic images by date
-    pf.mosaic_ims_by_date(im_masked_path, im_mask_fns, im_mosaics_path, AOI_UTM, plot_results)
-
+    f.PS_mosaic_ims_by_date(im_masked_path, im_masked_fns, im_mosaics_path, AOI_UTM, plot_results)
 
 # ------------------------------------
 # ---  3. Adjust image radiometry  ---
@@ -198,17 +213,19 @@ if 3 in steps_to_run:
     print('--------------------------')
 
     # -----Create a polygon(s) of the top 20th percentile elevations within the AOI
-    polygon_top, polygon_bottom, im_mosaic_fn, im_mosaic = pf.create_AOI_elev_polys(AOI_UTM, im_mosaics_path, im_mosaic_fns, DEM)
-
+    polygon_top, polygon_bottom, im_mosaic_fn, im_mosaic = f.create_AOI_elev_polys(AOI_UTM, im_mosaics_path, im_mosaic_fns, DEM)
+    
     # -----Loop through images
     for im_mosaic_fn in im_mosaic_fns:
-
+        
         # load image
         print(im_mosaic_fn)
         # adjust radiometry
-        plot_results=False
-        im_adj_fn, im_adj_method = pf.adjust_image_radiometry(im_mosaic_fn, im_mosaics_path, polygon_top, polygon_bottom, AOI_UTM, ds_dict, dataset, site_name, im_adjusted_path, skip_clipped, plot_results)
+        im_adjusted_fn, im_adj_method = f.PS_adjust_image_radiometry(im_mosaic_fn, im_mosaics_path, polygon_top,
+                                                                     polygon_bottom, AOI_UTM, ds_dict, dataset,
+                                                                     site_name, im_adjusted_path, skip_clipped, plot_results)
         print('image adjustment method = ' + im_adj_method)
+        print('----------')
         print(' ')
 
 # ----------------------------
@@ -237,11 +254,11 @@ if 4 in steps_to_run:
         # load file
         im_adjusted = xr.open_dataset(im_adjusted_fn)
         # classify images
-        plot_results=True
-        im_classified = lf.classify_image(im_adjusted, clf, feature_cols,
-                                          crop_to_AOI, AOI, ds_dict, dataset,
-                                          site_name, im_classified_path, plot_results,
-                                          figures_out_path)
+        im_classified = f.classify_image(im_adjusted, clf, feature_cols,
+                                         crop_to_AOI, AOI, ds_dict, dataset,
+                                         site_name, im_classified_path, plot_results,
+                                         figures_out_path)
+        
         print(' ')
     
     
@@ -283,6 +300,7 @@ if 5 in steps_to_run:
             im_adjusted_fn = [x for x in im_adjusted_fns if (im_dt in x)][0]
             im_adjusted = xr.open_dataset(im_adjusted_fn)
             # delineate snowline
+            plot_results = True
             snowline_df = lf.delineate_im_snowline(im_adjusted, im_classified, site_name, AOI_UTM, DEM, ds_dict, dataset, im_dt, snowlines_path, figures_out_path, plot_results)
         # save snowline to file
         snowline_df.to_pickle(snowlines_path + snowline_fn)
@@ -324,51 +342,30 @@ if 5 in steps_to_run:
         sec_xaxis.tick_params(axis='x', length=0, pad=-10)
         fig2.suptitle(site_name + ' Glacier median snow line elevations')
         fig2.tight_layout()
-        plt.show()
         # save figure
         fig2_fn = figures_out_path + dataset + '_' + site_name + '_' + date_start.replace('-','') + '_' + date_end.replace('-','')+ '_snowline_median_elevs.png'
         fig2.savefig(fig2_fn, dpi=300, facecolor='white', edgecolor='none')
         print('figure saved to file:' + fig2_fn)
 
-# -------------------------------------
-# ---  *Compile figures into .gif*  ---
-# -------------------------------------
-# -----SCA figures
-#os.chdir(figures_out_path)
-#fig_fns = glob.glob('PlanetScope_*_SCA.png') # load all output figure file names
-#if fig_fns:
-#    print('Compiling individual SCA figures into gif...')
-#    fig_fns = sorted(fig_fns) # sort chronologically
-#    # grab figures date range for .gif file name
-#    fig_start_date = fig_fns[0][3:-8] # first figure date
-#    fig_end_date = fig_fns[-1][3:-8] # final figure date
-#    frames = [PIL_Image.open(im) for im in fig_fns]
-#    frame_one = frames[0]
-#    gif_fn = ('PlanetScope_' + fig_start_date[0:8] + '_' + fig_end_date[0:8] + '_SCA.gif' )
-#    frame_one.save(figures_out_path + gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
-#    print('GIF saved to file:' + figures_out_path + gif_fn)
-#    # clean up: delete individual figure files
-#    for fig_fn in fig_fns:
-#        os.remove(fig_fn)
-#    print('Individual figure files deleted.')
-#    
-## -----Snowline figures
-#fig_fns = glob.glob('PlanetScope_*_snowline.png') # load all output figure file names
-#if fig_fns:
-#    print('Compiling individual snowline figures into .gif...')
-#    fig_fns = sorted(fig_fns) # sort chronologically
-#    # grab figures date range for .gif file name
-#    fig_start_date = fig_fns[0].sp')[3:-8] # first figure date
-#    fig_end_date = fig_fns[-1][3:-8] # final figure date
-#    frames = [PIL_Image.open(im) for im in fig_fns]
-#    frame_one = frames[0]
-#    gif_fn = ('PlanetScope_' + fig_start_date[0:8] + '_' + fig_end_date[0:8] + '_snowlines.gif' )
-#    frame_one.save(figures_out_path + gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
-#    print('GIF saved to file:' + figures_out_path + gif_fn)
-#    # clean up: delete individual figure files
-#    for fig_fn in fig_fns:
-#        os.remove(fig_fn)
-#    print('Individual figure files deleted.')
-#    print(' ')
+### Compile individual snowline figures into a GIF ###
+# -----Identify the string that is present in all figure file names to be compiled
+fig_fns_str = 'Sentinel2_' + site_name + '_*snowline.png'
+# define the output .gif filename
+gif_fn = 'Sentinel2_' + site_name + '_' + date_start.replace('-','') + '_' + date_end.replace('-','') + '_snowlines.gif'
+
+# -----Make a .gif of output images
+os.chdir(figures_out_path)
+fig_fns = glob.glob(fig_fns_str) # load all output figure file names
+fig_fns = sorted(fig_fns) # sort chronologically
+# grab figures date range for .gif file name
+frames = [PIL_Image.open(im) for im in fig_fns]
+frame_one = frames[0]
+frame_one.save(figures_out_path + gif_fn, format="GIF", append_images=frames, save_all=True, duration=2000, loop=0)
+print('GIF saved to file:' + figures_out_path + gif_fn)
+
+# -----Clean up: delete individual figure files
+for fn in fig_fns:
+    os.remove(os.path.join(figures_out_path, fn))
+print('Individual figure files deleted.')
 
 print('DONE!')

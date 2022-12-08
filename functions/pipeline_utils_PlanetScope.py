@@ -364,24 +364,6 @@ def mask_im_pixels(im_path, im_fn, out_path, save_outputs, plot_results):
         # write to tiff file
         im_mask.rio.to_raster(out_path + im_mask_fn)
         print('masked image saved to file: ' + out_path + im_mask_fn)
-
-        # copy metadata
-#        out_meta = im.rio.meta.copy()
-#        out_meta.update({'driver': 'GTiff',
-#                         'width': im_mask.data[0].shape[1],
-#                         'height': im_mask.data[0].shape[0],
-#                         'count': 4,
-#                         'dtype': 'int16',
-#                         'nodata': -9999,
-#                         'crs': im.rio.crs,
-#                         'transform': im.rio.transform()})
-#        # write to file
-#        with rio.open(os.path.join(out_path, im_mask_fn), mode='w',**out_meta) as dst:
-#            # write bands - multiply bands by im_scalar and convert datatype to int16 to decrease file size
-#            dst.write_band(1, im_mask.data[0])
-#            dst.write_band(2, im_mask.data[1])
-#            dst.write_band(3, im_mask.data[2])
-#            dst.write_band(4, im_mask.data[3])
         
     # -----Plot results
     if plot_results:
