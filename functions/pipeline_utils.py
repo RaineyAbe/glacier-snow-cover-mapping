@@ -1,4 +1,4 @@
-# Functions for image adjustment and snow classification in Landsat surface reflectance imagery
+# Functions for image adjustment and snow classification in Landsat, Sentinel-2, and PlanetScope surface reflectance imagery
 # Rainey Aberle
 # 2022
 
@@ -173,7 +173,7 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
   
     # -----Filter image collection by coverage of the AOI
     print('Adjusting and filtering image collection by AOI coverage...')
-    def getCover(image):
+    def get_area_coverage(image):
         # calculate the number of inputs
         totPixels = ee.Number(image.unmask(1).reduceRegion(
             reducer=ee.Reducer.count(),
@@ -191,7 +191,7 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
         # add perc_cover as property
         return image.set('perc_AOI_cover', perc_AOI_cover);
     # apply percent coverage property
-    L_clip_mask_AOIcover = L_clip_mask.map(getCover)
+    L_clip_mask_AOIcover = L_clip_mask.map(get_area_coverage)
     # filter images with < 50% coverage of the AOI
     L_clip_mask_AOIcover_filt = L_clip_mask_AOIcover.filter(ee.Filter.greaterThanOrEquals('perc_AOI_cover', 50))
     
@@ -231,7 +231,9 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
         im_xr_UTM['NDSI'] = ((im_xr_UTM[NDSI_bands[0]] - im_xr_UTM[NDSI_bands[1]]) / (im_xr_UTM[NDSI_bands[0]] + im_xr_UTM[NDSI_bands[1]]))
         
         # -----Save to file
-        im_xr_UTM.to_netcdf(out_path + im_ds_fn)
+        # multiply surface reflectance values by 10,000 to save as int format
+        im_xr_UTM.to_netcdf(out_path + im_ds_fn,
+                            encoding={})
         print('Landsat masked SR image saved to file: ' + out_path + im_ds_fn)
         # plot
         if plot_results:
