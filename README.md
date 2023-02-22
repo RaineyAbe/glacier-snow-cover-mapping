@@ -9,7 +9,7 @@ Contact: raineyaberle@u.boisestate.edu
 ## Description
 Notebooks & short workflow for detecting snow-covered area, seasonal snowlines, and equilibrium line altitudes in PlanetScope 4-band, Landsat and Sentinel-2 imagery.
 
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/methods_workflow_nostep4.png" alt="Image processing workflow" width="600"/>
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/methods_workflow.png" alt="Image processing workflow" width="600"/>
 
 ## Installation
 #### 1. Clone repository
@@ -37,7 +37,7 @@ Now, run the following command in a terminal so that you can use the `planet-sno
 
 ## Run the snow classification and snowline detection pipeline
 
-The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory or Python scripts -- located in the `scripts` directory. 
+The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory or Python scripts -- located in the `scripts` directory. To run a Notebook, open a new Terminal, navigate (`cd`) to `snow-cover-mapping/notebooks`, activate the Conda environment (if using), and run the command `jupyter lab` or `jupyter notebook` to open the Jupyter interface in a web browser.  
 
 #### 1. Download PlanetScope imagery
 Download imagery either through Planet Explorer or using the Python API with the `download_PlanetScope_images.ipynb` notebook.
