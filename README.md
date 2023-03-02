@@ -60,7 +60,7 @@ Run the `snow_classification_pipeline.ipynb` notebook. This requires a [free Goo
 
 #### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
 
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="600"/>
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs_SouthCascade.png" alt="Example filtered snowline time series at South Cascade Glacier, WA" width="600"/>
 
 ## Recommended directory structure
 The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below.  
@@ -83,6 +83,7 @@ _Initial set-up:_ Before running any notebooks
     └── ...
 
 _After running the snow classification workflow:_ Includes directories that are automatically created. 
+
     .
     ├── ...
     ├── base_path                       # Folder containing the snow-cover-mapping code repository and study-sites folder
