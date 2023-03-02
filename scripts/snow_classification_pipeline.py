@@ -21,12 +21,12 @@
 
 ##### MODIFY HERE #####
 
-# -----Paths in directory
+# -----Paths in directory and settings
 site_name = 'Sperry'
 # path to snow-cover-mapping/
 base_path = '/Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/'
 # path to AOI including the name of the shapefile
-AOI_fn = base_path + '../study-sites/' + site_name + '/glacier_outlines/' + site_name + '_USGS_*.shp'
+AOI_fn = base_path + '../study-sites/' + site_name + '/AOI/' + site_name + '_USGS_*.shp'
 # path to DEM including the name of the tif file
 # Note: set DEM_fn=None if you want to use the ASTER GDEM on Google Earth Engine
 DEM_fn = base_path + '../study-sites/' + site_name + '/DEMs/' + site_name + '*_DEM*.tif'
@@ -121,8 +121,8 @@ else:
 # ------------------------- #
 # --- 1. Sentinel-2 TOA --- #
 # ------------------------- #
-
 if 1 in steps_to_run:
+    print('----------')
     print('Sentinel-2 TOA')
     print('----------')
 
@@ -194,11 +194,12 @@ if 1 in steps_to_run:
                                                       snowlines_path, figures_out_path, plot_results)
 
             print('Median snowline elevation: ' + str(snowline_df['snowlines_elevs_median'][0]) + ' m')
+    print(' ')
+
 
 # ------------------------ #
 # --- 2. Sentinel-2 SR --- #
 # ------------------------ #
-
 if 2 in steps_to_run:
     print('Sentinel-2 SR')
     print('----------')
@@ -271,12 +272,12 @@ if 2 in steps_to_run:
                                                       snowlines_path, figures_out_path, plot_results)
 
             print('Median snowline elevation: ' + str(snowline_df['snowlines_elevs_median'][0]) + ' m')
+    print(' ')
 
 
 # ------------------------- #
 # --- 3. Landsat 8/9 SR --- #
 # ------------------------- #
-
 if 3 in steps_to_run:
     print('Landsat 8/9 SR')
     print('----------')
@@ -348,6 +349,7 @@ if 3 in steps_to_run:
                                                       snowlines_path, figures_out_path, plot_results)
 
             print('Median snowline elevation: ' + str(snowline_df['snowlines_elevs_median'][0]) + ' m')
+    print(' ')
 
 
 # ------------------------- #
