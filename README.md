@@ -58,9 +58,9 @@ Run the `snow_classification_pipeline.ipynb` notebook. This requires a [free Goo
 
 #### 3. Filter median snowline elevations and identify the annual ELAs for all years of observation using the `snowline_filter_fit.ipynb` notebook. 
 
-#### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs_SouthCascade.png" alt="Example filtered snowline time series at South Cascade Glacier, WA" width="800"/>
 
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs_SouthCascade.png" alt="Example filtered snowline time series at South Cascade Glacier, WA" width="600"/>
+#### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
 
 ## Recommended directory structure
 The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below.  
