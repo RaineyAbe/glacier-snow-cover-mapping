@@ -54,11 +54,11 @@ The workflow can be run using Jupyter Notebooks -- located in the `notebooks` di
 Download imagery either through Planet Explorer or using the Python API with the `download_PlanetScope_images.ipynb` notebook.
 
 #### 2. Run the snow detection workflow
-Run the `snow_classification_pipeline.ipynb` notebook. This requires a [free Google Earth Engine account](https://signup.earthengine.google.com/#!/) to access imagery. 
+Run the `snow_classification_pipeline.ipynb` notebook. 
 
 #### 3. Filter median snowline elevations and identify the annual ELAs for all years of observation using the `snowline_filter_fit.ipynb` notebook. 
 
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs_SouthCascade.png" alt="Example filtered snowline time series at South Cascade Glacier, WA" width="800"/>
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/filtered_snowline_timeseries_SouthCascade.png" alt="Example filtered snowline time series at South Cascade Glacier, WA" width="800"/>
 
 #### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
 
