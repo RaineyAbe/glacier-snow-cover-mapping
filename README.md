@@ -7,7 +7,7 @@ Boise State University
 Contact: raineyaberle@u.boisestate.edu
 
 ## Description
-Notebooks & short workflow for detecting snow-covered area, seasonal snowlines, and equilibrium line altitudes in PlanetScope 4-band, Landsat and Sentinel-2 imagery.
+Workflow for detecting glacier snow-covered area, seasonal snowlines, and equilibrium line altitudes in PlanetScope 4-band, Landsat 8/9, and Sentinel-2 imagery.
 
 <img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/methods_workflow.png" alt="Image processing workflow" width="600"/>
 
