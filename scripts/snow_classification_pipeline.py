@@ -80,7 +80,7 @@ snowlines_path = out_path + 'snowlines/'
 
 # -----Add path to functions
 sys.path.insert(1, base_path+'functions/')
-import pipeline_utils_REORG as f
+import pipeline_utils as f
 
 # -----Load dataset dictionary
 with open(base_path + 'inputs-outputs/datasets_characteristics.pkl', 'rb') as fn:
