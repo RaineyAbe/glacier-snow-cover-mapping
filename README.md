@@ -28,19 +28,22 @@ To clone the `snow-cover-mapping` repository into your local directory, open a n
 
 If you forked the code repository to your personal account, replace `RaineyAbe` with `YourUserName` in the command above. 
 
-#### 2. Create Conda environment from .yml file
+#### 2. Download Miniconda or Anaconda
+For version control and environment management, I recommend downloading either [Miniconda or Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html). This will enable you to install the environment directly using the .yml file below. See [this helpful guide](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) for getting started with Conda if you are unfamiliar. 
+
+#### 3. Create Conda environment from .yml file
 To ensure all required packages for the notebooks/scripts are installed, I recommend creating a conda environment using the `environment.yml` file provided. To create the conda environment using the .yml file for this repository, execute the following command:
 
 `conda env create -f environment.yml`
 
 [Here is a helpful resource](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) for working with Conda environments.
 
-#### 3. Activate Conda environment
+#### 4. Activate Conda environment
 To activate the Conda environment, execute the following command:
 
 `conda activate snow-cover-mapping`
 
-#### 4. Add Conda environment as an ipykernel
+#### 5. Add Conda environment as an ipykernel
 
 Now, run the following command in a terminal so that you can use the `planet-snow` environment in Jupyter Notebook/Lab:
 
@@ -48,7 +51,9 @@ Now, run the following command in a terminal so that you can use the `planet-sno
 
 ## Run the snow classification and snowline detection pipeline
 
-The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory or Python scripts -- located in the `scripts` directory. To run a Notebook, open a new Terminal, navigate (`cd`) to `snow-cover-mapping/notebooks`, activate the Conda environment (if using), and run the command `jupyter lab` or `jupyter notebook` to open the Jupyter interface in a web browser.  
+The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory or Python scripts -- located in the `scripts` directory. To run a Notebook, open a new Terminal, navigate (`cd`) to `snow-cover-mapping/notebooks`, activate the Conda environment (if using), and run the command `jupyter lab` or `jupyter notebook` to open the Jupyter interface in a web browser. 
+
+Note: The first time you open a notebook, you will likely have to specify the kernel as `snow-cover-mapping`, which will then enable the use of the environment for future use in the notebook.  
 
 #### 1. Download PlanetScope imagery
 Download imagery either through Planet Explorer or using the Python API with the `download_PlanetScope_images.ipynb` notebook.
@@ -63,7 +68,7 @@ Run the `snow_classification_pipeline.ipynb` notebook. This requires a [free Goo
 <img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="600"/>
 
 ## Recommended directory structure
-The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below.  
+The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below. Otherwise, you can modify the file paths and names in the "Set-up" section of each notebook. 
 
 _Initial set-up:_ Before running any notebooks
 
