@@ -59,11 +59,9 @@ Note: The first time you open a notebook, you will likely have to specify the ke
 Download imagery either through Planet Explorer or using the Python API with the `download_PlanetScope_images.ipynb` notebook.
 
 #### 2. Run the snow detection workflow
-Run the `snow_classification_pipeline.ipynb` notebook. This requires a [free Google Earth Engine account](https://signup.earthengine.google.com/#!/) to access imagery. 
+Run the `snow_classification_pipeline.ipynb` notebook. 
 
 #### 3. Filter median snowline elevations time series using the `snowline_filter_fit.ipynb` notebook to mitigate the impact of poor image quality or classification. 
-
-<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="600"/>
 
 ## Recommended directory structure
 The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below. Otherwise, you can modify the file paths and names in the "Set-up" section of each notebook. 
@@ -86,6 +84,7 @@ _Initial set-up:_ Before running any notebooks
     └── ...
 
 _After running the snow classification workflow:_ Includes directories that are automatically created. 
+
     .
     ├── ...
     ├── base_path                       # Folder containing the snow-cover-mapping code repository and study-sites folder
