@@ -2,7 +2,7 @@
 
 Rainey Aberle, Ellyn Enderlin, HP Marshall, Shad O'Neel, & Alejandro Flores
 
-Boise State University
+Department of Geosciences, Boise State University
 
 Contact: raineyaberle@u.boisestate.edu
 
@@ -13,26 +13,26 @@ Workflow for detecting glacier snow-covered area, seasonal snowlines, and equili
 
 ## Requirements
 
-1. Planet account ([sign up here](https://www.planet.com/signup/)) with access to PlanetScope imagery through the NASA Commercial SmallSat Data Acquisition program ([apply here](https://www.planet.com/markets/nasa/)). It may take time to have your account approved for free PlanetScope image downloads. 
+1. Google Earth Engine account to access Landsat and Sentinel-2 imagery. [Sign up here](https://earthengine.google.com/new_signup/). 
 
-2. Google Earth Engine account to access Landsat and Sentinel-2 imagery. [Sign up here](https://earthengine.google.com/new_signup/). 
+2. (Optional) Planet account ([sign up here](https://www.planet.com/signup/)) with access to PlanetScope imagery through the NASA Commercial SmallSat Data Acquisition program ([apply here](https://www.planet.com/markets/nasa/)). It may take time for your account to be approved for free PlanetScope images access. 
 
 ## Installation
 #### Optional: Fork repository for personal use
-To save a copy of the code for personal use, fork the `snow-cover-mapping` code repository to your personal GitHub account. See [this page](https://docs.github.com/en/get-started/quickstart/fork-a-repo) for instructions on how to fork a repository. 
+To save a copy of the code for personal use, fork the `snow-cover-mapping` code repository to your personal GitHub account. See [this page](https://docs.github.com/en/get-started/quickstart/fork-a-repo) for instructions on how to fork a GitHub repository. 
 
-#### 1. Clone repository
-To clone the `snow-cover-mapping` repository into your local directory, open a new Terminal window and change directory (`cd`) to where you want it to be stored. Then, execute the following command:
+#### 1. Clone code repository
+To clone the `snow-cover-mapping` repository into your local directory, open a new Terminal window and change directory (`cd`) to where you want it to be stored (which is referred to as the `base_path` in the code). Then, execute the following command:
 
 `git clone https://github.com/RaineyAbe/snow-cover-mapping.git`
 
-If you forked the code repository to your personal account, replace `RaineyAbe` with `YourUserName` in the command above. 
+If you forked the code repository to your personal Git account, replace `RaineyAbe` with `YourUserName` in the command above. 
 
 #### 2. Download Miniconda or Anaconda
-For version control and environment management, I recommend downloading either [Miniconda or Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html). This will enable you to install the environment directly using the .yml file below. See [this helpful guide](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) for getting started with Conda if you are unfamiliar. 
+For packaging and managing all of the required Python packages, I recommend downloading either [Miniconda or Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html). This will enable you to install the environment directly using the .yml file below. See [this helpful guide](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) for getting started with Conda if you are unfamiliar. 
 
 #### 3. Create Conda environment from .yml file
-To ensure all required packages for the notebooks/scripts are installed, I recommend creating a conda environment using the `environment.yml` file provided. To create the conda environment using the .yml file for this repository, execute the following command:
+To ensure all required packages for the notebooks/scripts are installed, I recommend creating a conda environment using the `environment.yml` file provided by executing the following command:
 
 `conda env create -f environment.yml`
 
@@ -45,25 +45,23 @@ To activate the Conda environment, execute the following command:
 
 #### 5. Add Conda environment as an ipykernel
 
-Now, run the following command in a terminal so that you can use the `planet-snow` environment in Jupyter Notebook/Lab:
+Now, run the following command so that you can use the `snow-cover-mapping` environment in Jupyter Notebook/Lab:
 
 `python -m ipykernel install --user --name=snow-cover-mapping`
 
 ## Run the snow classification and snowline detection pipeline
 
-The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory or Python scripts -- located in the `scripts` directory. To run a Notebook, open a new Terminal, navigate (`cd`) to `snow-cover-mapping/notebooks`, activate the Conda environment (if using), and run the command `jupyter lab` or `jupyter notebook` to open the Jupyter interface in a web browser. 
+The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory, or Python scripts -- located in the `scripts` directory. To run a Notebook, open a new Terminal window, navigate (`cd`) to `snow-cover-mapping/notebooks`, activate the Conda environment (if using), and run the command `jupyter lab` or `jupyter notebook` to open the Jupyter interface in a web browser. 
 
-Note: The first time you open a notebook, you will likely have to specify the kernel as `snow-cover-mapping`, which will then enable the use of the environment for future use in the notebook.  
+Note: The first time you open a notebook, you will likely have to specify the kernel as `snow-cover-mapping`.  
 
-#### 1. Download PlanetScope imagery
+#### 1. Download PlanetScope imagery 
 Download imagery either through Planet Explorer or using the Python API with the `download_PlanetScope_images.ipynb` notebook.
 
 #### 2. Run the snow detection workflow
 Run the `snow_classification_pipeline.ipynb` notebook. This requires a [free Google Earth Engine account](https://signup.earthengine.google.com/#!/) to access imagery. 
 
-#### 3. Filter median snowline elevations and identify the annual ELAs for all years of observation using the `snowline_filter_fit.ipynb` notebook. 
-
-#### Optional: some example code for plotting results is provided in the `make_figures.ipynb` notebook. 
+#### 3. Filter median snowline elevations time series using the `snowline_filter_fit.ipynb` notebook to mitigate the impact of poor image quality or classification. 
 
 <img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/median_snowline_elevs.png" alt="Image processing workflow" width="600"/>
 
@@ -102,7 +100,8 @@ _After running the snow classification workflow:_ Includes directories that are 
     │   │   │   │   ├── classified      # Where all classified images will be saved
     │   │   │   │   └── snowlines       # Where all snowlines and ELAs will be saved
     │   │   │   ├── AOIs                # Folder containing outline of the Area of Interest (AOI), shapefile
-    │   │   │   └── DEMs                # Folder containing digital elevation model of the AOI (optional)  
+    │   │   │   ├── DEMs                # Folder containing digital elevation model of the AOI (optional)  
+    │   │   │   └── figures             # Where figures/images will be saved
     │   │   └── ...              
     │   └── ...
     └── ...
