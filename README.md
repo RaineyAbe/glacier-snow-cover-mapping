@@ -63,6 +63,8 @@ Run the `snow_classification_pipeline.ipynb` notebook.
 
 #### 3. Filter median snowline elevations time series using the `snowline_filter_fit.ipynb` notebook to mitigate the impact of poor image quality or classification. 
 
+<img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/filtered_snowline_timeseries_SouthCascade.png" alt="South Cascade Glacier filtered time series" width="800"/>
+
 ## Recommended directory structure
 The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below. Otherwise, you can modify the file paths and names in the "Set-up" section of each notebook. 
 
