@@ -21,25 +21,26 @@
 
 ##### MODIFY HERE #####
 
-# -----Paths in directory and settings
-site_name = 'Sperry'
-# path to snow-cover-mapping/
+# -----Paths in directory
+site_name = 'SouthCascade'
+# path to snow-cover-mapping/ - Make sure you include a "/" at the end
 base_path = '/Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/'
 # path to AOI including the name of the shapefile
-AOI_fn = base_path + '../study-sites/' + site_name + '/AOI/' + site_name + '_USGS_*.shp'
+AOI_path = base_path + '../study-sites/' + site_name + '/AOIs/'
+# AOI file name
+AOI_fn =  'SouthCascade_USGS_glacier_outline_2021.shp'
 # path to DEM including the name of the tif file
-# Note: set DEM_fn=None if you want to use the ASTER GDEM on Google Earth Engine
-DEM_fn = base_path + '../study-sites/' + site_name + '/DEMs/' + site_name + '*_DEM*.tif'
+# Note: set DEM_path==None and DEM_fn=None if you want to use the ASTER GDEM via Google Earth Engine
+DEM_path = base_path + '../study-sites/' + site_name + '/DEMs/'
+# DEM file name
+DEM_fn = 'SouthCascade_20210813_DEM_filled.tif'
 # path for output images
 out_path = base_path + '../study-sites/' + site_name + '/imagery/'
 # path to PlanetScope images
 # Note: set PS_im_path=None if not using PlanetScope
-PS_im_path = out_path + 'PlanetScope/2016-2022/'
+PS_im_path = out_path + 'PlanetScope/raw_images/'
 # path for output figures
 figures_out_path = base_path + '../study-sites/' + site_name + '/figures/'
-# define steps to run
-# 1 = Sentinel-2 TOA; 2 = Sentinel-2 SR; 3 = Landsat 8/9 SR; 4 = PlanetScope SR
-steps_to_run = [1, 2, 3, 4]
 
 # -----Define image search filters
 date_start = '2013-05-01'
@@ -47,12 +48,16 @@ date_end = '2023-01-01'
 month_start = 5
 month_end = 11
 cloud_cover_max = 100
+# Determine whether to mask clouds using the respective cloud masking data products
+# NOTE: Cloud mask products anecdotally are less accurate over glacierized/snow-covered surfaces.
+# If the cloud masks are consistently masking large regions or your study site, I suggest setting mask_clouds = False
+mask_clouds = True
 
 # -----Determine settings
 plot_results = True # = True to plot figures of results for each image where applicable
-skip_clipped = False # = True to skip images where bands appear "clipped", i.e. max blue SR < 0.8
+skip_clipped = False # = True to skip images where bands appear "clipped", i.e. max(blue) < 0.8
 crop_to_AOI = True # = True to crop images to AOI before calculating SCA
-save_outputs = True # = True to save SCA images to file
+save_outputs = True # = True to save SCAs and snowlines to file
 save_figures = True # = True to save SCA output figures to file
 
 #######################
@@ -85,7 +90,7 @@ import pipeline_utils as f
 # -----Load dataset dictionary
 with open(base_path + 'inputs-outputs/datasets_characteristics.pkl', 'rb') as fn:
     dataset_dict = pickle.load(fn)
-
+    
 # -----Authenticate and initialize GEE
 try:
     ee.Initialize()
@@ -97,26 +102,19 @@ except:
 print('Loading AOI and DEM files...')
 print(' ')
 # load AOI as gpd.GeoDataFrame
-AOI_fn = glob.glob(AOI_fn)[0]
-AOI = gpd.read_file(AOI_fn)
-# reproject the AOI to WGS to solve for the optimal UTM zone
-AOI_WGS = AOI.to_crs(4326)
+AOI = gpd.read_file(AOI_path + AOI_fn)
+AOI_WGS = AOI.to_crs(4326) # reproject the AOI to WGS to solve for the optimal UTM zone
 AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
-                    AOI_WGS.geometry[0].centroid.xy[1][0]]
-epsg_UTM = f.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
+                    AOI_WGS.geometry[0].centroid.xy[1][0]] # grab centroid coordinates
+epsg_UTM = f.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1]) # estimate the optimal UTM zone EPSG code
 # load DEM as Xarray DataSet
 if DEM_fn==None:
-    # query GEE for DEM
-    DEM, AOI_UTM = f.query_GEE_for_DEM(AOI)
+    DEM, AOI_UTM = f.query_GEE_for_DEM(AOI) # query GEE for DEM
 else:
-    # reproject AOI to UTM
-    AOI_UTM = AOI.to_crs(str(epsg_UTM))
-    # load DEM as xarray DataSet
-    DEM_fn = glob.glob(DEM_fn)[0]
-    DEM = xr.open_dataset(DEM_fn)
+    AOI_UTM = AOI.to_crs('EPSG:'+str(epsg_UTM)) # reproject AOI to UTM
+    DEM = xr.open_dataset(DEM_path + DEM_fn) # load DEM as xarray DataSet
     DEM = DEM.rename({'band_data': 'elevation'})
-    # reproject the DEM to the optimal UTM zone
-    DEM = DEM.rio.reproject(str('EPSG:'+epsg_UTM))
+    DEM = DEM.rio.reproject('EPSG:'+str(epsg_UTM)) # reproject the DEM to the optimal UTM zone
 
 # ------------------------- #
 # --- 1. Sentinel-2 TOA --- #
@@ -134,9 +132,9 @@ if 1 in steps_to_run:
 
     # -----Query GEE for imagery
     dataset = 'Sentinel2_TOA'
-    im_list = f.query_GEE_for_Sentinel2(dataset, dataset_dict, site_name,
-                                         AOI_UTM, date_start, date_end, month_start,
-                                         month_end, cloud_cover_max)
+    im_list = f.query_GEE_for_Sentinel2(dataset, dataset_dict, site_name, AOI_UTM,
+                                        date_start, date_end, month_start, month_end,
+                                        cloud_cover_max, mask_clouds)
     im_list_size = im_list.size().getInfo()
 
     # -----Loop through images
@@ -187,8 +185,12 @@ if 1 in steps_to_run:
                 if type(im_classified)==str:
                     continue
 
-                # -----Delineate snowline(s)
+               # -----Delineate snowline(s)
                 plot_results = True
+                # create directory for figures if it doesn't already exist
+                if (os.path.exists(figures_out_path)==False) & (plot_results==True):
+                    os.mkdir(figure_out_path)
+                    print('Created directory for output figures: '+figures_out_path)
                 snowline_df = f.delineate_im_snowline(im_xr_UTM, im_classified, site_name, AOI_UTM, DEM,
                                                       dataset_dict, dataset, im_date, snowline_fn,
                                                       snowlines_path, figures_out_path, plot_results)
@@ -212,9 +214,9 @@ if 2 in steps_to_run:
 
     # -----Query GEE for imagery
     dataset = 'Sentinel2_SR'
-    im_list = f.query_GEE_for_Sentinel2(dataset, dataset_dict, site_name,
-                                           AOI_UTM, date_start, date_end, month_start,
-                                           month_end, cloud_cover_max)
+    im_list = f.query_GEE_for_Sentinel2(dataset, dataset_dict, site_name, AOI_UTM,
+                                        date_start, date_end, month_start, month_end,
+                                        cloud_cover_max, mask_clouds)
     im_list_size = im_list.size().getInfo()
 
     # -----Loop through images
@@ -267,6 +269,10 @@ if 2 in steps_to_run:
 
                 # -----Delineate snowline(s)
                 plot_results = True
+                # create directory for figures if it doesn't already exist
+                if (os.path.exists(figures_out_path)==False) & (plot_results==True):
+                    os.mkdir(figure_out_path)
+                    print('Created directory for output figures: '+figures_out_path)
                 snowline_df = f.delineate_im_snowline(im_xr_UTM, im_classified, site_name, AOI_UTM, DEM,
                                                       dataset_dict, dataset, im_date, snowline_fn,
                                                       snowlines_path, figures_out_path, plot_results)
@@ -291,7 +297,7 @@ if 3 in steps_to_run:
     # -----Query GEE for imagery
     dataset = 'Landsat'
     im_list = f.query_GEE_for_Landsat_SR(AOI_UTM, date_start, date_end, month_start, month_end,
-                                      cloud_cover_max, site_name, dataset, dataset_dict, out_path)
+                                         cloud_cover_max, mask_clouds, site_name, dataset, dataset_dict)
     im_list_size = im_list.size().getInfo()
 
     # -----Loop through images
@@ -344,6 +350,10 @@ if 3 in steps_to_run:
 
                 # -----Delineate snowline(s)
                 plot_results = True
+                # create directory for figures if it doesn't already exist
+                if (os.path.exists(figures_out_path)==False) & (plot_results==True):
+                    os.mkdir(figure_out_path)
+                    print('Created directory for output figures: '+figures_out_path)
                 snowline_df = f.delineate_im_snowline(im_xr_UTM, im_classified, site_name, AOI_UTM, DEM,
                                                       dataset_dict, dataset, im_date, snowline_fn,
                                                       snowlines_path, figures_out_path, plot_results)
@@ -423,12 +433,16 @@ if 4 in steps_to_run:
             continue
 
         # -----Delineate snowline(s)
+        plot_results=True
+        # create directory for figures if it doesn't already exist
+        if (os.path.exists(figures_out_path)==False) & (plot_results=True):
+            os.mkdir(figure_out_path)
+            print('Created directory for output figures: '+figures_out_path)
         snowline_fn = im_date.replace('-','').replace(':','') + '_' + site_name + '_' + dataset + '_snowline.pkl'
         if os.path.exists(snowlines_path + snowline_fn):
             print('Snowline already exists in file, loading...')
             snowline_df = pd.read_pickle(snowlines_path + snowline_fn)
         else:
-            plot_results=True
             snowline_df = f.delineate_im_snowline(im_adj, im_classified, site_name, AOI_UTM, DEM,
                                                   dataset_dict, dataset, im_date, snowline_fn,
                                                   snowlines_path, figures_out_path, plot_results)

@@ -16,10 +16,11 @@ import rasterio as rio
 from rasterio import features as rfeatures
 from pathlib import Path
 import numpy as np
+from tqdm.auto import tqdm
 
 
 def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
-                  item_type, asset_types):
+                  item_type, asset_type):
     '''Compile input filters to create request for Planet API search'''
     
     geometry_filter = {
@@ -58,22 +59,15 @@ def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
       "config": [geometry_filter, date_range_filter, cloud_cover_filter]
     }
 
-    if len(asset_types) > 1:
-        request = {
-            "item_types": [item_type],
-            "asset_types": asset_types,
-            "filter": combined_filter
-        }
-    else:
-        request = {
-            "item_types": [item_type],
-            "asset_types": asset_types,
-            "filter": combined_filter
-        }
+    request = {
+        "item_types": [item_type],
+        "asset_types": [asset_type],
+        "filter": combined_filter
+    }
             
     return request
 
-def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset_types):
+def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset_type):
     '''Build Planet API request for image orders with image IDs'''
     
     # define the clip and harmonize tools
@@ -81,12 +75,14 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
     harmonize_tool = {"harmonize": {"target_sensor": "Sentinel-2"}}
     
     # determine which product bundle to use
-    if ("analytic_sr" in asset_types) & ("udm2" in asset_types):
-        product_bundle = "analytic_sr_udm2"
-    elif ("analytic_sr" in asset_types):
-        product_bundle = "analytic_sr"
+    if (item_type=="PSScene") & ("sr" in asset_type):
+        product_bundle = "analytic_sr_udm2" # 4-band surface reflectance products with UDM2 mask
+#    elif (item_type=="PSScene") & ("udm2" in asset_type):
+#        product_bundle = "analytic_udm2" # 4-band top of atomsphere reflectance products with UDM2 mask
+#    elif (item_type=="PSScene") & ("sr" in asset_type):
+#        product_bundle = "analytic_sr" # 4-band surface reflectance products with any mask
     else:
-        print("asset types not recognized for product bundle, exiting...")
+        print("Error in product bundle selection, exiting...")
         return "N/A"
     
     # create request object depending on settings
@@ -110,6 +106,7 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
                   "item_ids": im_ids,
                   "item_type": item_type,
                   "product_bundle": product_bundle
+#                  "asset_type": asset_types
               }
            ],
             "tools": [clip_tool]
@@ -176,16 +173,18 @@ def download_results(results, out_folder, overwrite=False):
     results_names = [r['name'] for r in results]
     print('{} items to download'.format(len(results_urls)))
     
-    for url, name in zip(results_urls, results_names):
-        path = Path(os.path.join(out_folder,name)) #pathlib.Path(os.path.join('data', name))
-        
+    count = 0 # count for downloaded files
+    for url, name in tqdm(list(zip(results_urls, results_names))):
+        path = Path(os.path.join(out_folder,name))
         if overwrite or not path.exists():
-            print('downloading {} to {}'.format(name, path))
             r = requests.get(url, allow_redirects=True)
             path.parent.mkdir(parents=True, exist_ok=True)
             open(path, 'wb').write(r.content)
         else:
             print('{} already exists, skipping {}'.format(path, name))
+        
+        count+=1
+    print('Done!')
 
 def get_utm_projection_fcn(shape):
     # define projection
