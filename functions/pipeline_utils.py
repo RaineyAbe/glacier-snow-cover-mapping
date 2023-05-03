@@ -21,6 +21,7 @@ import matplotlib
 import subprocess
 import glob
 from tqdm.auto import tqdm
+import re
 
 
 # --------------------------------------------------
@@ -50,13 +51,67 @@ def convert_wgs_to_utm(lon: float, lat: float):
     return epsg_code
 
 # --------------------------------------------------
-def query_GEE_for_DEM(AOI):
+def plot_xr_RGB_image(im_xr, RGB_bands):
+    '''Plot RGB image of xarray.DataSet
+
+    Parameters
+    ----------
+    im_xr: xarray.DataSet
+        dataset containing image bands in data variables with x and y coordinates.
+        Assumes x and y coordinates are in units of meters.
+    RGB_bands: List
+        list of data variable names for RGB bands contained within the dataset, e.g. ['red', 'green', 'blue']
+
+    Returns
+    ----------
+    fig: matplotlib.pyplot.figure
+        figure handle for the resulting plot
+    ax: matplotlib.pyplot.figure.Axes
+        axis handle for the resulting plot
+    '''
+
+    # -----Grab RGB bands from dataset
+    if len(np.shape(im_xr[RGB_bands[0]].data)) > 2: # check if need to take [0] of data
+        red = im_xr[RGB_bands[0]].data[0]
+        blue = im_xr[RGB_bands[1]].data[0]
+        green = im_xr[RGB_bands[2]].data[0]
+    else:
+        red = im_xr[RGB_bands[0]].data
+        blue = im_xr[RGB_bands[1]].data
+        green = im_xr[RGB_bands[2]].data
+
+    # -----Format datatype as float, rescale RGB pixel values from 0 to 1
+    red, green, blue = red.astype(float), green.astype(float), blue.astype(float)
+    im_min = np.nanmin(np.ravel([red, green, blue]))
+    im_max = np.nanmax(np.ravel([red, green, blue]))
+    red = ((red - im_min) * (1/(im_max - im_min)))
+    green = ((green - im_min) * (1/(im_max - im_min)))
+    blue = ((blue - im_min) * (1/(im_max - im_min)))
+
+    # -----Plot
+    fig, ax = plt.subplots(1, 1, figsize=(8,6))
+    ax.imshow(np.dstack([red, green, blue]),
+              extent=(np.min(im_xr.x.data)/1e3, np.max(im_xr.x.data)/1e3, np.min(im_xr.y.data)/1e3, np.max(im_xr.y.data)/1e3))
+    ax.grid()
+    ax.set_xlabel('Easting [km]')
+    ax.set_ylabel('Northing [km]')
+
+    return fig, ax
+
+# --------------------------------------------------
+def query_GEE_for_DEM(AOI, base_path, site_name, out_path=None):
     '''Query GEE for the ASTER Global DEM, clip to the AOI, and return as a numpy array.
 
     Parameters
     ----------
     AOI: geopandas.geodataframe.GeoDataFrame
         area of interest used for clipping the DEM
+    base_path: str
+        path to 'snow-cover-mapping/' used to load ArcticDEM_Mosaic_coverage.shp
+    site_name: str
+        name of site used for saving output files
+    out_path: str
+        path where DEM will be saved (if size exceeds GEE limit). Default = None.
 
     Returns
     ----------
@@ -66,49 +121,98 @@ def query_GEE_for_DEM(AOI):
         AOI reprojected to the appropriate UTM coordinate reference system
     '''
 
-    # -----Reformat AOI for clipping DEM
+    # -----Grab optimal UTM zone, reproject AOI
     # reproject AOI to WGS 84 for compatibility with DEM
     AOI_WGS = AOI.to_crs('EPSG:4326')
-    AOI_WGS_buffer = AOI_WGS.buffer(1000)
-    # reformat AOI_WGS bounding box as ee.Geometry for clipping DEM
-    # AOI_WGS_bb_ee = ee.Geometry.Polygon(
-    #                         [[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
-    #                           [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
-    #                           [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
-    #                           [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
-    #                           [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
-    #                         ]).buffer(1000)
-    region = {'type': 'Polygon',
-              'coordinates':[[
-                              [AOI_WGS_buffer.geometry.bounds.minx[0], AOI_WGS_buffer.geometry.bounds.miny[0]],
-                              [AOI_WGS_buffer.geometry.bounds.maxx[0], AOI_WGS_buffer.geometry.bounds.miny[0]],
-                              [AOI_WGS_buffer.geometry.bounds.maxx[0], AOI_WGS_buffer.geometry.bounds.maxy[0]],
-                              [AOI_WGS_buffer.geometry.bounds.minx[0], AOI_WGS_buffer.geometry.bounds.maxy[0]],
-                              [AOI_WGS_buffer.geometry.bounds.minx[0], AOI_WGS_buffer.geometry.bounds.miny[0]]
-                             ]]
-             }
-
-    # -----Query GEE for DEM, clip to AOI
-    DEM = gd.MaskedImage.from_id("NASA/ASTER_GED/AG100_003", region=region)
-
-    # -----Grab optimal UTM zone, reproject AOI
     AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
                         AOI_WGS.geometry[0].centroid.xy[1][0]]
     epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
     AOI_UTM = AOI.to_crs('EPSG:'+str(epsg_UTM))
 
-    # -----Convert DEM to xarray.Dataset
-    # grab image ID
-    # im_id = list(DEM.properties.keys())[:4][0]
-    # DEM_im = gd.MaskedImage.from_id(im_id)
-    # DEM_im = DEM_im.set('system:time_start', 0) # set an arbitrary time
-    DEM_ds = DEM.wx.to_xarray(scale=30, crs='EPSG:'+str(epsg_UTM))
+    # -----Define output image name(s), check if already exists in directory
+    ArcticDEM_fn = site_name+'_ArcticDEM_clip.tif'
+    NASADEM_fn = site_name+'_NASADEM_clip.tif'
+    if os.path.exists(out_path+ArcticDEM_fn):
+        print('Clipped ArcticDEM already exists in directory, loading...')
+        DEM_ds = xr.open_dataset(out_path+ArcticDEM_fn)
+        DEM_ds = DEM_ds.rename({'band_data':'elevation'}) # rename band data to "elevation"
+        DEM_ds = DEM_ds.rio.reproject('EPSG:'+str(epsg_UTM)) # reproject to optimal UTM zone
+    elif os.path.exists(out_path+NASADEM_fn):
+        print('Clipped NASADEM already exists in directory, loading...')
+        DEM_ds = xr.open_dataset(out_path+NASADEM_fn)
+        DEM_ds = DEM_ds.rename({'band_data':'elevation'}) # rename band data to "elevation"
+        DEM_ds = DEM_ds.rio.reproject('EPSG:'+str(epsg_UTM)) # reproject to optimal UTM zone
+    else: # if no DEM exists in directory, load from GEE
+
+        # -----Reformat AOI for clipping DEM
+        AOI_UTM_buffer = AOI_UTM.copy(deep=True)
+        AOI_UTM_buffer.geometry[0] = AOI_UTM_buffer.geometry[0].buffer(1000)
+        AOI_WGS_buffer = AOI_UTM_buffer.to_crs('EPSG:4326')
+        region = {'type': 'Polygon',
+                  'coordinates':[[
+                                  [AOI_WGS_buffer.geometry.bounds.minx[0], AOI_WGS_buffer.geometry.bounds.miny[0]],
+                                  [AOI_WGS_buffer.geometry.bounds.maxx[0], AOI_WGS_buffer.geometry.bounds.miny[0]],
+                                  [AOI_WGS_buffer.geometry.bounds.maxx[0], AOI_WGS_buffer.geometry.bounds.maxy[0]],
+                                  [AOI_WGS_buffer.geometry.bounds.minx[0], AOI_WGS_buffer.geometry.bounds.maxy[0]],
+                                  [AOI_WGS_buffer.geometry.bounds.minx[0], AOI_WGS_buffer.geometry.bounds.miny[0]]
+                                 ]]
+                 }
+
+        # -----Check for ArcticDEM coverage over AOI
+        # load ArcticDEM_Mosaic_coverage.shp
+        ArcticDEM_coverage_fn = 'ArcticDEM_Mosaic_coverage.shp'
+        ArcticDEM_coverage = gpd.read_file(base_path+'inputs-outputs/'+ArcticDEM_coverage_fn)
+        # reproject to optimal UTM zone
+        ArcticDEM_coverage_UTM = ArcticDEM_coverage.to_crs('EPSG:'+str(epsg_UTM))
+        # check for intersection with AOI
+        intersects = ArcticDEM_coverage_UTM.geometry[0].intersects(AOI_UTM.geometry[0])
+        # use ArcticDEM if intersects==True
+        if intersects:
+            print('ArcticDEM coverage over AOI');
+            DEM = gd.MaskedImage.from_id('UMN/PGC/ArcticDEM/V3/2m_mosaic', region=region)
+            DEM_fn = ArcticDEM_fn # file name for saving
+            res = 2 # spatial resolution [m]
+        else:
+            print('No ArcticDEM coverage, using NASADEM')
+            DEM = gd.MaskedImage.from_id("NASA/NASADEM_HGT/001", region=region)
+            DEM_fn = NASADEM_fn # file name for saving
+            res = 30 # spatial resolution [m]
+
+        # -----Determine whether DEM must be downloaded
+        # # Calculate width and height of AOI bounding box [m]
+        # AOI_UTM_bb_width = AOI_UTM.geometry[0].bounds[2] - AOI_UTM.geometry[0].bounds[0]
+        # AOI_UTM_bb_height = AOI_UTM.geometry[0].bounds[3] - AOI_UTM.geometry[0].bounds[1]
+        # if ((AOI_UTM_bb_width / res) * (AOI_UTM_bb_height / res) >= 1e9):
+        #     DEM_download = True
+        #     # print('DEM must be downloaded for full spatial resolution')
+        # else:
+        #     DEM_download = False
+        #     # print('DEM size is within GEE limit, no download necessary')
+
+        # -----Download DEM and open as xarray.Dataset
+        # if DEM_download:
+        print('Downloading DEM to '+out_path)
+
+        # download DEM
+        DEM.download(out_path+DEM_fn, region=region)
+        # read DEM as xarray.Dataset
+        DEM_ds = xr.open_dataset(out_path+DEM_fn)
+        # reproject to UTM
+        DEM_ds = DEM_ds.rio.reproject('EPSG:'+str(epsg_UTM))
+        DEM_ds = DEM_ds.rename({'band_data':'elevation'})
+        # remove unnecessary data
+        if len(np.shape(DEM.elevation.data))>2:
+            DEM['elevation'] = DEM.elevation[0]
+        # else:
+        #     DEM_ee_im = DEM.ee_image.clip(region)
+        #     DEM_ds = DEM_ee_im.wx.to_xarray(scale=res, region=region, crs='EPSG:4326')
+        #     DEM_ds = DEM_ds.rio.reproject('EPSG:'+str(epsg_UTM))
 
     return DEM_ds, AOI_UTM
 
 
 # --------------------------------------------------
-def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds, site_name, dataset, dataset_dict):
+def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds, out_path=None):
     '''
     Query Google Earth Engine for Landsat 8 and 9 surface reflectance (SR) imagery.
 
@@ -128,21 +232,14 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
         maximum image cloud cover percentage (0-100)
     mask_clouds: bool
         whether to mask clouds using the 'QA_PIXEL' band
-    site_name: str
-        name of study site used for output file names
-    dataset: str
-        name of dataset ('Landsat', 'Sentinel2_TOA', 'Sentinel2_SR', 'PlanetScope')
-    dataset_dict: dict
-        dictionary of parameters for each dataset
+    out_path: str
+        path where images will be downloaded
 
     Returns
     __________
-    L_im_list: list
-        list of ee.Images, masked and filtered using AOI coverage
+    im_ds_list: list
+        list of xarray.Datasets, masked and filtered using AOI coverage
     '''
-
-    # -----Subset dataset_dict to dataset
-    ds_dict = dataset_dict[dataset]
 
     # -----Reformat AOI for image filtering
     # reproject AOI to WGS
@@ -151,14 +248,9 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
     AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
                     AOI_WGS.geometry[0].centroid.xy[1][0]]
     epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
-    # reformat AOI for clipping images
-    # AOI_WGS_bb_ee = ee.Geometry.Polygon(
-    #                         [[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
-    #                           [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
-    #                           [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
-    #                           [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
-    #                           [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
-    #                         ])
+    AOI_UTM = AOI_WGS.to_crs('EPSG:'+str(epsg_UTM))
+
+    # -----Query GEE for images
     region = {'type': 'Polygon',
               'coordinates':[[
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
@@ -166,111 +258,116 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]
-                            ]]
-              }
-
-    # -----Query GEEdim for imagery
+                            ]]}
+    # query geedim for imagery
     print('Querying GEE for Landsat imagery...')
     L = (gd.MaskedCollection.from_name('LANDSAT/LC08/C02/T1_L2')
-         .search(start_date=date_start, end_date=date_end, region=region))
+         .search(start_date=date_start, end_date=date_end, region=region,
+                 fill_portion=50, cloudless_portion=cloud_cover_max, mask=mask_clouds))
+                 #custom_filter="ee.Filter.calendarRange(month_start, month_end, 'month')"))
     print('Number of images found = '+str(len(L.properties)))
+    # exit if no images were found
+    if len(L.properties)<1:
+        return 'N/A'
 
-    # L = (ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
-    #          .filter(ee.Filter.lt("CLOUD_COVER", cloud_cover_max))
-    #          .filterDate(ee.Date(date_start), ee.Date(date_end))
-    #          .filter(ee.Filter.calendarRange(month_start, month_end, 'month'))
-    #          .filterBounds(AOI_WGS_bb_ee))
-    # # define band names
-    # L_band_names = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7', 'QA_PIXEL']
-    # #  clip images to AOI and select bands
-    # def clip_image(im):
-    #     return im.clip(AOI_WGS_bb_ee.buffer(1000))
-    # L_clip = L.map(clip_image).select(L_band_names)
-    #
-    # # -----Mask clouds and cloud shadows
-    # if mask_clouds==True:
-    #     def mask_clouds(image):
-    #         # QA_PIXEL bits:
-    #         # Bit 0: Fill
-    #         # Bit 1: Dilated Cloud
-    #         # Bit 2: Cirrus (high confidence)
-    #         # Bit 3: Cloud
-    #         # Bit 4: Cloud Shadow
-    #         # Bit 5: Snow
-    #         # Bit 6: Clear (0: Cloud or Dilated Cloud bits are set, 1: Cloud and Dilated Cloud bits are not set)
-    #         # Bit 7: Water
-    #         # Bits 8-9: Cloud Confidence (0: None, 1: Low, 2: Medium, 3: High)
-    #         # Bits 10-11: Cloud Shadow Confidence (0: None, 1: Low, 2: Medium, 3: High)
-    #         # Bits 12-13: Snow/Ice Confidence (0: None, 1: Low, 2: Medium, 3: High)
-    #         # Bits 14-15: Cirrus Confidence (0: None, 1: Low, 2: Medium, 3: High)
-    #         dilated_mask = image.select('QA_PIXEL').bitwiseAnd(1 << 1).eq(0)
-    #         cirrus_mask = image.select('QA_PIXEL').bitwiseAnd(1 << 2).eq(0)
-    #         cloud_mask = image.select('QA_PIXEL').bitwiseAnd(1 << 3).eq(0)
-    #         image_masked = image.updateMask(dilated_mask).updateMask(cirrus_mask).updateMask(cloud_mask)
-    #         # Return the masked image, scaled to reflectance, without the QA bands.
-    #         return image_masked
-    #     L_clip_mask = L_clip.map(mask_clouds)
-    # else:
-    #     L_clip_mask = L_clip
+    # grab image IDs
+    iLA = [m.start() for m in re.finditer('LA', L.properties_table)] # index of "LA"s
+    im_IDs = [L.properties_table[iLA[i]:].split(' ')[0] for i in range(len(iLA))]
 
-    # -----Mosaic images captured the same day
-    # def merge_by_date(im_col):
-    #     # convert image collection to a list
-    #     imgList = im_col.toList(im_col.size())
-    #     # driver function for mapping the unique dates
-    #     def uniqueDriver(image):
-    #         return ee.Image(image).date().format("YYYY-MM-dd")
-    #     uniqueDates = imgList.map(uniqueDriver).distinct()
-    #     # Driver function for mapping mosaics
-    #     def mosaicDriver(date):
-    #         date = ee.Date(date)
-    #         image = (im_col
-    #                .filterDate(date, date.advance(1, "day"))
-    #                .mosaic())
-    #         return image.set(
-    #                         "system:time_start", date.millis(),
-    #                         "system:id", date.format("YYYY-MM-dd")).clip(AOI_WGS_bb_ee.buffer(1000))
-    #     mosaicImgList = uniqueDates.map(mosaicDriver)
-    #     return ee.ImageCollection(mosaicImgList)
-    # L_clip_mask_mosaic = merge_by_date(L_clip_mask)
+    # -----Determine whether images must be downloaded (image sizes exceed GEE limit)
+    im_download = True # wxee has a bug related to new xarray release, I think
+    # Calculate width and height of AOI bounding box [m]
+    AOI_UTM_bb_width = AOI_UTM.geometry[0].bounds[2] - AOI_UTM.geometry[0].bounds[0]
+    AOI_UTM_bb_height = AOI_UTM.geometry[0].bounds[3] - AOI_UTM.geometry[0].bounds[1]
+    # Check if bounding box is larger than GEE image outputs (30 m resolution, 8 bands)
+    if ((AOI_UTM_bb_width / 30 * 8)*(AOI_UTM_bb_height / 30 * 8)) > 1e9:
+        im_download = True
+        print('Landsat 8/9 images must be downloaded for full spatial resolution')
 
-    # -----Filter image collection by coverage of the AOI
-    # print('Adjusting and filtering image collection by AOI coverage...')
-    # def get_area_coverage(image):
-    #     # calculate the number of inputs
-    #     totPixels = ee.Number(image.unmask(1).reduceRegion(
-    #         reducer=ee.Reducer.count(),
-    #         scale=30,
-    #         geometry=AOI_WGS_bb_ee,
-    #     ).values().get(0))
-    #     # calculate the actual amount of pixels inside the AOI
-    #     actPixels = ee.Number(image.select('SR_B2').reduceRegion(
-    #         reducer=ee.Reducer.count(),
-    #         scale=30,
-    #         geometry=AOI_WGS_bb_ee,
-    #     ).values().get(0));
-    #     # calculate the percent coverage of the AOI
-    #     perc_AOI_cover = actPixels.divide(totPixels).multiply(100).round();
-    #     # add perc_cover as property
-    #     return image.set('perc_AOI_cover', perc_AOI_cover);
-    # # apply percent coverage property
-    # L_clip_mask_mosaic_AOIcover = L_clip_mask_mosaic.map(get_area_coverage)
-    # # filter images with < 50% coverage of the AOI
-    # L_clip_mask_mosaic_AOIcover_filt = L_clip_mask_mosaic_AOIcover.filter(ee.Filter.greaterThanOrEquals('perc_AOI_cover', 50))
-    #
-    # print(str(L_clip_mask_mosaic_AOIcover_filt.size().getInfo()) + ' images found')
+    # -----Convert image collection to list of xarray.Datasets
+    # initialize list of xarray.Datasets
+    im_ds_list = []
+    os.chdir(out_path)
+    if im_download:
+        print('Downloading images to ' + out_path)
+        # loop through image IDs
+        for im_ID in im_IDs[0:5]:
+            # create gd.MaskedImage from image ID
+            im = gd.MaskedImage.from_id(im_ID, mask=True)
+            # define image filename for saving
+            im_fn = im_ID.split('L2/')[1]+'.tif'
+            # download if doesn't exist in directory
+            if os.path.exists(out_path+im_fn)==False:
+                im.download(out_path + im_fn, region=region)
+            else:
+                print(im_fn+' already exists in directory, skipping...')
+            # read in xarray.DataArray
+            im_da = xr.open_dataset(im_fn)
+            # reproject to optimal UTM zone
+            im_da = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
+            # convert to xarray.DataSet
+            im_ds = xr.Dataset(
+                data_vars=dict(
+                    SR_B2=(["y", "x"], im_da.band_data.data[0]),
+                    SR_B3=(["y", "x"], im_da.band_data.data[1]),
+                    SR_B4=(["y", "x"], im_da.band_data.data[2]),
+                    SR_B5=(["y", "x"], im_da.band_data.data[3]),
+                    SR_B6=(["y", "x"], im_da.band_data.data[4]),
+                    SR_B7=(["y", "x"], im_da.band_data.data[5]),
+                ),
+                coords=dict(
+                    x = im_da.x.data,
+                    y = im_da.y.data
+                )
+            )
+            # expand dimensions to include time
+            im_dt = np.datetime64(im_fn.split('_')[-1][0:4] + '-' + im_fn.split('_')[-1][4:6] + '-' + im_fn.split('_')[-1][6:8])
+            im_ds = im_ds.expand_dims({'time':[im_dt]})
+            # set CRS
+            im_ds.rio.write_crs('EPSG:'+str(epsg_UTM), inplace=True)
+            # add xarray.Dataset to list
+            im_ds_list = im_ds_list + [im_ds]
 
-    # -----Return list of images
-    # sort ImageCollection by date and convert to List
-    # L_im_list = ee.ImageCollection(L_clip_mask_mosaic_AOIcover_filt).sort('system:time_start').toList(1e3)
+    else:
+        # loop through image IDs
+        for im_ID in im_IDs[0:4]:
+            # create gd.MaskedImage from image ID
+            im_gd = gd.MaskedImage.from_id(im_ID, mask=True, region=region)
+            # create ee.Image and select bands
+            im_ee = im_gd.ee_image#.select(L.refl_bands)
+            # convert to xarray.Dataset
+            im_ds = im_ee.wx.to_xarray()
+            # reproject to optimal UTM zone
+            im_ds = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
+            # add xarray.Dataset to list
+            im_ds_list = im_ds_list + [im_ds]
 
-    # -----Convert ee.ImageCollection to gd.MaskedCollection
-    # L_im_list_gd = gd.MaskedCollection(L_im_list)
+    return im_ds_list
 
-    return L
+        # mosaic images captured the same day
+        # def merge_by_date(im_col):
+        #     # convert image collection to a list
+        #     imgList = im_col.toList(im_col.size())
+        #     # driver function for mapping the unique dates
+        #     def uniqueDriver(image):
+        #         return ee.Image(image).date().format("YYYY-MM-dd")
+        #     uniqueDates = imgList.map(uniqueDriver).distinct()
+        #     # Driver function for mapping mosaics
+        #     def mosaicDriver(date):
+        #         date = ee.Date(date)
+        #         image = (im_col
+        #                .filterDate(date, date.advance(1, "day"))
+        #                .mosaic())
+        #         return image.set(
+        #                         "system:time_start", date.millis(),
+        #                         "system:id", date.format("YYYY-MM-dd")).clip(AOI_WGS_bb_ee.buffer(1000))
+        #     mosaicImgList = uniqueDates.map(mosaicDriver)
+        #     return ee.ImageCollection(mosaicImgList)
+        # L_clip_mask_mosaic = merge_by_date(L_clip_mask)
+
 
 # --------------------------------------------------
-def query_GEE_for_Sentinel2(dataset, dataset_dict, site_name, AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds):
+def query_GEE_for_Sentinel2(dataset, dataset_dict, site_name, AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds, S2_download, out_path=None):
     '''
     Query Google Earth Engine for Sentinel-2 surface reflectance (SR) imagery.
 
@@ -296,6 +393,10 @@ def query_GEE_for_Sentinel2(dataset, dataset_dict, site_name, AOI, date_start, d
         maximum image cloud cover percentage (0-100)
     mask_clouds: bool
         whether to mask clouds using the S2_CLOUDLESS data product (True or False)
+    S2_download: bool
+        whether images must be downloaded for full spatial resolution using geedim
+    out_path: str
+        path where images will be downloaded
 
     Returns
     ----------
@@ -320,160 +421,161 @@ def query_GEE_for_Sentinel2(dataset, dataset_dict, site_name, AOI, date_start, d
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
                             ])
 
-    def clip_image(im):
-        return im.clip(AOI_WGS_bb_ee.buffer(1000))
-
     # -----Subset dataset_dict to dataset
     ds_dict = dataset_dict[dataset]
 
     # -----Query GEE for imagery
-    if dataset=='Sentinel2_SR':
-        print('Querying GEE for Sentinel-2 SR imagery...')
-        S2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") # surface reflectance
-    elif dataset=='Sentinel2_TOA':
-        print('Querying GEE for Sentinel-2 TOA imagery...')
-        S2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED") # TOA
+    if S2_download:
+        print('hello')
     else:
-        print('dataset variable not recognized for Sentinel-2, exiting...')
-        return
-    # apply filters to image collection
-    S2 = (S2.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_cover_max))
-           .filterDate(ee.Date(date_start), ee.Date(date_end))
-           .filter(ee.Filter.calendarRange(month_start, month_end, 'month'))
-           .filterBounds(AOI_WGS_bb_ee))
-    #  clip images to AOI and select bands
-    def clip_image(im):
-        return im.clip(AOI_WGS_bb_ee.buffer(1000))
-    S2_band_names = [band for band in ds_dict['bands'] if 'QA' not in band]
-    S2_clip = S2.map(clip_image).select(S2_band_names)
-    if S2_clip.size().getInfo() < 1:
-        print('No images found, exiting...')
-        return
+        if dataset=='Sentinel2_SR':
+            print('Querying GEE for Sentinel-2 SR imagery...')
+            S2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") # surface reflectance
+        elif dataset=='Sentinel2_TOA':
+            print('Querying GEE for Sentinel-2 TOA imagery...')
+            S2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED") # TOA
+        else:
+            print('dataset variable not recognized for Sentinel-2, exiting...')
+            return
+        # apply filters to image collection
+        S2 = (S2.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_cover_max))
+               .filterDate(ee.Date(date_start), ee.Date(date_end))
+               .filter(ee.Filter.calendarRange(month_start, month_end, 'month'))
+               .filterBounds(AOI_WGS_bb_ee))
+        #  clip images to AOI and select bands
+        def clip_image(im):
+            return im.clip(AOI_WGS_bb_ee.buffer(1000))
+        S2_band_names = [band for band in ds_dict['bands'] if 'QA' not in band]
+        S2_clip = S2.map(clip_image).select(S2_band_names)
+        if S2_clip.size().getInfo() < 1:
+            print('No images found, exiting...')
+            return
 
-    # -----Apply cloud and shadow mask
-    if mask_clouds:
-        # define thresholds for cloud mask
-        CLD_PRB_THRESH = 50
-        NIR_DRK_THRESH = 0.15
-        CLD_PRJ_DIST = 1
-        BUFFER = 50
-        # Import and filter s2cloudless
-        S2_cloudless = (ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
-            .filterBounds(AOI_WGS_bb_ee)
-            .filterDate(date_start, date_end))
-        # clip to AOI
-        S2_cloudless_clip = S2_cloudless.map(clip_image)
-        # Join the filtered s2cloudless collection to the SR collection by the 'system:index' property.
-        S2_merge = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply(**{
-            'primary': S2_clip,
-            'secondary': S2_cloudless_clip,
-            'condition': ee.Filter.equals(**{
-                'leftField': 'system:index',
-                'rightField': 'system:index'
-            })
-        }))
-        def add_cloud_bands(img):
-            # Get s2cloudless image, subset the probability band.
-            cld_prb = ee.Image(img.get('s2cloudless')).select('probability')
-            # Condition s2cloudless by the probability threshold value.
-            is_cloud = cld_prb.gt(CLD_PRB_THRESH).rename('clouds')
-            # Add the cloud probability layer and cloud mask as image bands.
-            return img.addBands(ee.Image([cld_prb, is_cloud]))
-        def add_shadow_bands(img):
-            # Identify water pixels from the clouds band.
-            not_water = img.select('clouds').neq(6)
-            # Identify dark NIR pixels that are not water (potential cloud shadow pixels).
-            SR_BAND_SCALE = 1e4
-            dark_pixels = img.select('B8').lt(NIR_DRK_THRESH*SR_BAND_SCALE).multiply(not_water).rename('dark_pixels')
-            # Determine the direction to project cloud shadow from clouds (assumes UTM projection).
-            shadow_azimuth = ee.Number(90).subtract(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')));
-            # Project shadows from clouds for the distance specified by the CLD_PRJ_DIST input.
-            cld_proj = (img.select('probability').directionalDistanceTransform(shadow_azimuth, CLD_PRJ_DIST*10)
-                .reproject(**{'crs': img.select(0).projection(), 'scale': 100})
-                .select('distance')
-                .mask()
-                .rename('cloud_transform'))
-            # Identify the intersection of dark pixels with cloud shadow projection.
-            shadows = cld_proj.multiply(dark_pixels).rename('shadows')
-            # Add dark pixels, cloud projection, and identified shadows as image bands.
-            return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
-        def add_cld_shdw_mask(img):
-            # Add cloud component bands.
-            img_cloud = add_cloud_bands(img)
-            # Add cloud shadow component bands.
-            img_cloud_shadow = add_shadow_bands(img_cloud)
-            # Combine cloud and shadow mask, set cloud and shadow as value 1, else 0.
-            is_cld_shdw = img_cloud_shadow.select('clouds').add(img_cloud_shadow.select('shadows')).gt(0)
-            # Remove small cloud-shadow patches and dilate remaining pixels by BUFFER input.
-            # 20 m scale is for speed, and assumes clouds don't require 10 m precision.
-            is_cld_shdw = (is_cld_shdw.focalMin(2).focalMax(BUFFER*2/20)
-                .reproject(**{'crs': img.select([0]).projection(), 'scale': 20})
-                .rename('cloudmask'))
-            # Add the final cloud-shadow mask to the image.
-            return img_cloud_shadow.addBands(is_cld_shdw)
-        def apply_cld_shdw_mask(img):
-            # Subset the cloudmask band and invert it so clouds/shadow are 0, else 1.
-            not_cld_shdw = img.select('cloudmask').Not()
-            # Subset reflectance bands and update their masks, return the result.
-            return img.select('B.*').updateMask(not_cld_shdw)
-        # add bands for clouds, shadows, mask, and apply the mask
-        S2_merge_masked = (S2_merge.map(add_cloud_bands)
-                                   .map(add_shadow_bands)
-                                   .map(add_cld_shdw_mask)
-                                   .map(apply_cld_shdw_mask))
-    else:
-        S2_merge_masked = S2_clip
+        # -----Apply cloud and shadow mask
+        if mask_clouds:
+            # define thresholds for cloud mask
+            CLD_PRB_THRESH = 50
+            NIR_DRK_THRESH = 0.15
+            CLD_PRJ_DIST = 1
+            BUFFER = 50
+            # Import and filter s2cloudless
+            S2_cloudless = (ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+                .filterBounds(AOI_WGS_bb_ee)
+                .filterDate(date_start, date_end))
+            # clip to AOI
+            S2_cloudless_clip = S2_cloudless.map(clip_image)
+            # Join the filtered s2cloudless collection to the SR collection by the 'system:index' property.
+            S2_merge = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply(**{
+                'primary': S2_clip,
+                'secondary': S2_cloudless_clip,
+                'condition': ee.Filter.equals(**{
+                    'leftField': 'system:index',
+                    'rightField': 'system:index'
+                })
+            }))
+            def add_cloud_bands(img):
+                # Get s2cloudless image, subset the probability band.
+                cld_prb = ee.Image(img.get('s2cloudless')).select('probability')
+                # Condition s2cloudless by the probability threshold value.
+                is_cloud = cld_prb.gt(CLD_PRB_THRESH).rename('clouds')
+                # Add the cloud probability layer and cloud mask as image bands.
+                return img.addBands(ee.Image([cld_prb, is_cloud]))
+            def add_shadow_bands(img):
+                # Identify water pixels from the clouds band.
+                not_water = img.select('clouds').neq(6)
+                # Identify dark NIR pixels that are not water (potential cloud shadow pixels).
+                SR_BAND_SCALE = 1e4
+                dark_pixels = img.select('B8').lt(NIR_DRK_THRESH*SR_BAND_SCALE).multiply(not_water).rename('dark_pixels')
+                # Determine the direction to project cloud shadow from clouds (assumes UTM projection).
+                shadow_azimuth = ee.Number(90).subtract(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')));
+                # Project shadows from clouds for the distance specified by the CLD_PRJ_DIST input.
+                cld_proj = (img.select('probability').directionalDistanceTransform(shadow_azimuth, CLD_PRJ_DIST*10)
+                    .reproject(**{'crs': img.select(0).projection(), 'scale': 100})
+                    .select('distance')
+                    .mask()
+                    .rename('cloud_transform'))
+                # Identify the intersection of dark pixels with cloud shadow projection.
+                shadows = cld_proj.multiply(dark_pixels).rename('shadows')
+                # Add dark pixels, cloud projection, and identified shadows as image bands.
+                return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
+            def add_cld_shdw_mask(img):
+                # Add cloud component bands.
+                img_cloud = add_cloud_bands(img)
+                # Add cloud shadow component bands.
+                img_cloud_shadow = add_shadow_bands(img_cloud)
+                # Combine cloud and shadow mask, set cloud and shadow as value 1, else 0.
+                is_cld_shdw = img_cloud_shadow.select('clouds').add(img_cloud_shadow.select('shadows')).gt(0)
+                # Remove small cloud-shadow patches and dilate remaining pixels by BUFFER input.
+                # 20 m scale is for speed, and assumes clouds don't require 10 m precision.
+                is_cld_shdw = (is_cld_shdw.focalMin(2).focalMax(BUFFER*2/20)
+                    .reproject(**{'crs': img.select([0]).projection(), 'scale': 20})
+                    .rename('cloudmask'))
+                # Add the final cloud-shadow mask to the image.
+                return img_cloud_shadow.addBands(is_cld_shdw)
+            def apply_cld_shdw_mask(img):
+                # Subset the cloudmask band and invert it so clouds/shadow are 0, else 1.
+                not_cld_shdw = img.select('cloudmask').Not()
+                # Subset reflectance bands and update their masks, return the result.
+                return img.select('B.*').updateMask(not_cld_shdw)
+            # add bands for clouds, shadows, mask, and apply the mask
+            S2_merge_masked = (S2_merge.map(add_cloud_bands)
+                                       .map(add_shadow_bands)
+                                       .map(add_cld_shdw_mask)
+                                       .map(apply_cld_shdw_mask))
+        else:
+            S2_merge_masked = S2_clip
 
-    # -----Mosaic images captured the same daynum
-    def merge_by_date(im_col):
-        # convert image collection to a list
-        imgList = im_col.toList(im_col.size())
-        # driver function for mapping the unique dates
-        def uniqueDriver(image):
-            return ee.Image(image).date().format("YYYY-MM-dd")
-        uniqueDates = imgList.map(uniqueDriver).distinct()
-        # Driver function for mapping mosaics
-        def mosaicDriver(date):
-            date = ee.Date(date)
-            image = (im_col
-                   .filterDate(date, date.advance(1, "day"))
-                   .mosaic())
-            return image.set(
-                            "system:time_start", date.millis(),
-                            "system:id", date.format("YYYY-MM-dd")).clip(AOI_WGS_bb_ee.buffer(1000))
-        mosaicImgList = uniqueDates.map(mosaicDriver)
-        return ee.ImageCollection(mosaicImgList)
-    S2_merge_masked_mosaic = merge_by_date(S2_merge_masked)
+        # -----Mosaic images captured the same daynum
+        def merge_by_date(im_col):
+            # convert image collection to a list
+            imgList = im_col.toList(im_col.size())
+            # driver function for mapping the unique dates
+            def uniqueDriver(image):
+                return ee.Image(image).date().format("YYYY-MM-dd")
+            uniqueDates = imgList.map(uniqueDriver).distinct()
+            # Driver function for mapping mosaics
+            def mosaicDriver(date):
+                date = ee.Date(date)
+                image = (im_col
+                       .filterDate(date, date.advance(1, "day"))
+                       .mosaic())
+                return image.set(
+                                "system:time_start", date.millis(),
+                                "system:id", date.format("YYYY-MM-dd")).clip(AOI_WGS_bb_ee.buffer(1000))
+            mosaicImgList = uniqueDates.map(mosaicDriver)
+            return ee.ImageCollection(mosaicImgList)
+        S2_merge_masked_mosaic = merge_by_date(S2_merge_masked)
 
-    # -----Filter image collection by coverage of the AOI
-    print('Adjusting and filtering image collection by AOI coverage...')
-    def get_percent_coverage(image):
-        # calculate the number of inputs
-        totPixels = ee.Number(image.unmask(1).reduceRegion(
-            reducer=ee.Reducer.count(),
-            scale=10,
-            geometry=AOI_WGS_bb_ee,
-        ).values().get(0))
-        # calculate the actual amount of pixels inside the AOI
-        actPixels = ee.Number(image.select('B2').reduceRegion(
-            reducer=ee.Reducer.count(),
-            scale=10,
-            geometry=AOI_WGS_bb_ee,
-        ).values().get(0));
-        # calculate the percent coverage of the AOI
-        perc_AOI_cover = actPixels.divide(totPixels).multiply(100).round();
-        # add perc_cover as property
-        return image.set('perc_AOI_cover', perc_AOI_cover);
-    # apply percent coverage property
-    S2_merge_masked_mosaic_AOIcover = S2_merge_masked_mosaic.map(get_percent_coverage)
-    # filter images with < 50% coverage of the AOI
-    S2_merge_masked_mosaic_AOIcover_filt = S2_merge_masked_mosaic_AOIcover.filter(ee.Filter.greaterThanOrEquals('perc_AOI_cover', 50))
-    print(str(S2_merge_masked_mosaic_AOIcover_filt.size().getInfo()) + ' images found')
+        # -----Filter image collection by coverage of the AOI
+        print('Adjusting and filtering image collection by AOI coverage...')
+        def get_percent_coverage(image):
+            # calculate the number of inputs
+            totPixels = ee.Number(image.unmask(1).reduceRegion(
+                reducer=ee.Reducer.count(),
+                scale=10,
+                geometry=AOI_WGS_bb_ee,
+            ).values().get(0))
+            # calculate the actual amount of pixels inside the AOI
+            actPixels = ee.Number(image.select('B2').reduceRegion(
+                reducer=ee.Reducer.count(),
+                scale=10,
+                geometry=AOI_WGS_bb_ee,
+            ).values().get(0));
+            # calculate the percent coverage of the AOI
+            perc_AOI_cover = actPixels.divide(totPixels).multiply(100).round();
+            # add perc_cover as property
+            return image.set('perc_AOI_cover', perc_AOI_cover);
+        # apply percent coverage property
+        S2_merge_masked_mosaic_AOIcover = S2_merge_masked_mosaic.map(get_percent_coverage)
+        # filter images with < 50% coverage of the AOI
+        S2_merge_masked_mosaic_AOIcover_filt = S2_merge_masked_mosaic_AOIcover.filter(ee.Filter.greaterThanOrEquals('perc_AOI_cover', 50))
+        print(str(S2_merge_masked_mosaic_AOIcover_filt.size().getInfo()) + ' images found')
 
-    # -----Remove unnecessary bands
+        # -----Remove unnecessary bands
 
-    # -----Sort ImageCollection by date and convert to List
-    S2_im_list = ee.ImageCollection(S2_merge_masked_mosaic_AOIcover_filt).sort('system:time_start').toList(1e3)
+
+        # -----Sort ImageCollection by date and convert to List
+        S2_im_list = ee.ImageCollection(S2_merge_masked_mosaic_AOIcover_filt).sort('system:time_start').toList(1e3)
 
     return S2_im_list
 
@@ -731,14 +833,16 @@ def create_AOI_elev_polys(AOI, im_path, im_fns, DEM):
 
 
 # --------------------------------------------------
-def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI, dataset_dict, dataset, site_name, skip_clipped, plot_results):
+def PS_adjust_image_radiometry(im_xr, im_dt, polygon_top, polygon_bottom, AOI, dataset_dict, dataset, site_name, skip_clipped):
     '''
     Adjust PlanetScope image band radiometry using the band values in a defined snow-covered area (SCA) and the expected surface reflectance of snow.
 
     Parameters
     ----------
-    im_fn: str
-        file name of the input image
+    im_xr: xarray.DataSet
+        input image with x and y coordinates and data variables containing bands values
+    im_dt: numpy.datetime64
+        datetime of image capture
     im_path: str
         path in directory to the input image
     polygon_top: shapely.geometry.polygon.Polygon
@@ -749,8 +853,6 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
         area of interest
     skip_clipped: bool
         whether to skip images where bands appear "clipped"
-    plot_results: bool
-        whether to plot results to a matplotlib.pyplot.figure
 
     Returns
     ----------
@@ -763,18 +865,12 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
     # -----Subset dataset_dict to dataset
     ds_dict = dataset_dict[dataset]
 
-    # -----Check if adjusted image file exist
-    # extract datetime from file name
-    im_dt = np.datetime64(im_fn[0:4]+'-'+im_fn[4:6]+'-'+im_fn[6:8]+'T'+im_fn[9:11]+':00:00')
-
-    # -----Load input image
-    im = rxr.open_rasterio(os.path.join(im_path, im_fn))
+    # -----Adjust input image
     # set no data values to NaN
-    im = im.where(im!=-9999)
+    im = im_xr.where(im_xr!=-9999)
     # account for image scalar multiplier if necessary
-    im_scalar = 10000
-    if np.nanmean(im.data[2]) > 1e3:
-        im = im / im_scalar
+    if np.nanmean(im.band_data.data[2]) > 1e3:
+        im = im / ds_dict['image_scalar']
 
     # -----Return if image does not contain real values in 75% of the AOI
     # clip image to AOI
@@ -785,9 +881,9 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
                                [AOI.bounds.minx[0], AOI.bounds.miny[0]]])
     im_AOI = im.rio.clip([AOI_clip_region], im.rio.crs)
     # count number of pixels in image
-    npx = len(np.ravel(im_AOI.data[0]))
+    npx = len(np.ravel(im_AOI.band_data.data[0]))
     # count number of non-NaN pixels in image
-    npx_real = len(np.ravel(np.where(~np.isnan(im_AOI.data[0]))))
+    npx_real = len(np.ravel(np.where(~np.isnan(im_AOI.band_data.data[0]))))
     # percentage of non-NaN pixels in image
     p_real = npx_real / npx
     # skip if p_real < 0.75
@@ -796,10 +892,10 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
         return 'N/A', 'N/A'
 
     # define bands
-    b = im.data[0]
-    g = im.data[1]
-    r = im.data[2]
-    nir = im.data[3]
+    b = im.band_data.data[0]
+    g = im.band_data.data[1]
+    r = im.band_data.data[2]
+    nir = im.band_data.data[3]
 
     # -----Return if image bands are likely clipped
     if skip_clipped==True:
@@ -861,7 +957,6 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
     # -----Define the desired bright and dark surface reflectance values
     #       at the top elevations based on the method determined above
     if im_adj_method=='SNOW':
-
         # define desired SR values at the bright area and darkest point for each band
         # bright area
         bright_b_adj = 0.94
@@ -872,7 +967,6 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
         dark_adj = 0.0
 
     elif im_adj_method=='ICE':
-
         # define desired SR values at the bright area and darkest point for each band
         # bright area
         bright_b_adj = 0.58
@@ -929,12 +1023,12 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
         coords=im.coords,
         attrs = dict(
             no_data_values = np.nan,
-            SR_scalar = 1
+            image_scalar = 1
         )
     )
     # add NDSI band
-    im_adj['NDSI'] = ((im_adj[ds_dict['NDSI'][0]] - im_adj[ds_dict['NDSI'][1]])
-                       / (im_adj[ds_dict['NDSI'][0]] + im_adj[ds_dict['NDSI'][0]]))
+    im_adj['NDSI'] = ((im_adj[ds_dict['NDSI_bands'][0]] - im_adj[ds_dict['NDSI_bands'][1]])
+                       / (im_adj[ds_dict['NDSI_bands'][0]] + im_adj[ds_dict['NDSI_bands'][0]]))
     # add time dimension
     im_adj = im_adj.expand_dims(dim={'time':[im_dt]})
 
@@ -942,13 +1036,15 @@ def PS_adjust_image_radiometry(im_fn, im_path, polygon_top, polygon_bottom, AOI,
 
 
 # --------------------------------------------------
-def classify_image(im, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_dict, site_name, im_classified_fn, out_path):
+from shapely.geometry import Polygon, MultiPolygon
+
+def classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_dict, site_name, im_classified_fn, out_path):
     '''
     Function to classify image collection using a pre-trained classifier
 
     Parameters
     ----------
-    im: xarray.Dataset
+    im_xr: xarray.Dataset
         stack of images
     clf: sklearn.classifier
         previously trained SciKit Learn Classifier
@@ -957,7 +1053,7 @@ def classify_image(im, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_dic
     crop_to_AOI: bool
         whether to mask everywhere outside the AOI before classifying
     AOI: geopandas.geodataframe.GeoDataFrame
-        cropping region - everything outside the AOI will be masked if crop_to_AOI==True. AOI must be in the same CRS as the images.
+        cropping region - everything outside the AOI will be masked if crop_to_AOI==True. AOI must be in the same CRS as the image.
     dataset: str
         name of dataset ('Landsat', 'Sentinel2_SR', 'Sentinel2_TOA', 'PlanetScope')
     dataset_dict: dict
@@ -981,34 +1077,35 @@ def classify_image(im, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_dic
         print('Made output directory for classified images:' + out_path)
 
     # -----Define image bands and capture date
-    bands = [x for x in im.data_vars]
+    bands = [x for x in im_xr.data_vars]
     bands = [band for band in bands if 'QA' not in band]
-    im_date = str(im.time.data[0])[0:19]
+    im_date = np.datetime64(str(im_xr.time.data[0])[0:19], 'ns')
     print(im_date)
 
     # -----Subset dataset_dict to dataset
     ds_dict = dataset_dict[dataset]
 
-    # -----mask image pixels outside the AOI
-    im_AOI = im.copy().isel(time=0) # copy image, remove time dimension
+    # -----Crop image to the AOI
+    im_xr = im_xr.rio.write_crs('EPSG:'+str(epsg_UTM))
+    im_AOI = im_xr.squeeze(dim='time', drop=True)
     if crop_to_AOI:
-        mask = np.zeros((len(im.y.data), len(im.x.data)))
+        mask = np.zeros((len(im_xr.y.data), len(im_xr.x.data)))
         if AOI.geometry[0].geom_type=='MultiPolygon': # loop through geoms if AOI = MultiPolygon
             for poly in AOI.geometry[0].geoms:
                 d = {'geometry': [poly]}
-                gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(im.rio.crs.to_epsg()))
+                gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(im_xr.rio.crs.to_epsg()))
                 m = rio.features.geometry_mask(gdf.geometry,
-                                               (len(im.y.data), len(im.x.data)),
-                                               im.rio.transform(),
+                                               (len(im_xr.y.data), len(im_xr.x.data)),
+                                               im_xr.rio.transform(),
                                                all_touched=False,
                                                invert=False)
                 mask[m==0] = 1
         elif AOI.geometry[0].geom_type=='Polygon':
             d = {'geometry': [Polygon(AOI.geometry[0])]}
-            gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(im.rio.crs.to_epsg()))
+            gdf = gpd.GeoDataFrame(d, crs="EPSG:"+str(im_xr.rio.crs.to_epsg()))
             m = rio.features.geometry_mask(gdf.geometry,
-                                           (len(im.y.data), len(im.x.data)),
-                                           im.rio.transform(),
+                                           (len(im_xr.y.data), len(im_xr.x.data)),
+                                           im_xr.rio.transform(),
                                            all_touched=False,
                                            invert=False)
             mask[m==0] = 1
@@ -1016,53 +1113,53 @@ def classify_image(im, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_dic
         for band in bands:
             im_AOI[band] = im_AOI[band].where(mask==1)
 
-        # -----Prepare image for classification
-        # find indices of real numbers (no NaNs allowed in classification)
-        ix = [np.where((np.isfinite(im_AOI[band].data) & ~np.isnan(im_AOI[band].data)), True, False) for band in bands]
-        I_real = np.full(np.shape(im_AOI[bands[0]].data), True)
-        for ixx in ix:
-            I_real = I_real & ixx
-        # create df of image band values
-        df = pd.DataFrame(columns=feature_cols)
-        for col in feature_cols:
-            df[col] = np.ravel(im_AOI[col].data[I_real])
-        df = df.reset_index(drop=True)
+    # -----Prepare image for classification
+    # find indices of real numbers (no NaNs allowed in classification)
+    ix = [np.where((np.isfinite(im_AOI[band].data) & ~np.isnan(im_AOI[band].data)), True, False) for band in bands]
+    I_real = np.full(np.shape(im_AOI[bands[0]].data), True)
+    for ixx in ix:
+        I_real = I_real & ixx
+    # create df of image band values
+    df = pd.DataFrame(columns=feature_cols)
+    for col in feature_cols:
+        df[col] = np.ravel(im_AOI[col].data[I_real])
+    df = df.reset_index(drop=True)
 
-        # -----Classify image
-        if len(df)>1:
-            array_classified = clf.predict(df[feature_cols])
-        else:
-            print("No real values found to classify, skipping...")
-            return 'N/A'
-        # reshape from flat array to original shape
-        im_classified = np.zeros(im_AOI.to_array().data[0].shape)
-        im_classified[:] = np.nan
-        im_classified[I_real] = array_classified
+    # -----Classify image
+    if len(df)>1:
+        array_classified = clf.predict(df[feature_cols])
+    else:
+        print("No real values found to classify, skipping...")
+        return 'N/A'
+    # reshape from flat array to original shape
+    im_classified = np.zeros(im_AOI.to_array().data[0].shape)
+    im_classified[:] = np.nan
+    im_classified[I_real] = array_classified
 
-        # -----Save classified image to file
-        # create xarray DataSet
-        im_classified_xr = xr.Dataset(data_vars = dict(classified=(['y', 'x'], im_classified)),
-                                      coords = im_AOI.coords,
-                                      attrs = im_AOI.attrs)
-        # set coordinate reference system (CRS)
-        im_classified_xr = im_classified_xr.rio.write_crs(im.rio.crs)
-        # add time dimension
-        im_classified_xr = im_classified_xr.expand_dims(dim={'time':im.time.data})
-        # replace NaNs with -9999, convert data types to int
-        im_classified_xr_int = xr.where(np.isnan(im_classified_xr), -9999, im_classified_xr)
-        im_classified_xr_int.classified.data = im_classified_xr_int.classified.data.astype(int)
-        # add additional attributes for description and classes
-        im_classified_xr_int = im_classified_xr_int.assign_attrs({'Description':'Classified image',
-                                                          'NoDataValues':'-9999',
-                                                          'Classes':'1 = Snow, 2 = Shadowed snow, 3 = Ice, 4 = Rock, 5 = Water'})
-        # save to file
-        if '.nc' in im_classified_fn:
-            im_classified_xr_int.to_netcdf(out_path + im_classified_fn)
-        elif '.tif' in im_classified_fn:
-            # remove time dimension
-            im_classified_xr_int = im_classified_xr_int.drop_dims('time')
-            im_classified_xr_int.rio.to_raster(out_path + im_classified_fn)
-        print('Classified image saved to file: ' + out_path + im_classified_fn)
+    # -----Save classified image to file
+    # create xarray DataSet
+    im_classified_xr = xr.Dataset(data_vars = dict(classified=(['y', 'x'], im_classified)),
+                                  coords = im_AOI.coords,
+                                  attrs = im_AOI.attrs)
+    # set coordinate reference system (CRS)
+    im_classified_xr = im_classified_xr.rio.write_crs(im_xr.rio.crs)
+    # add time dimension
+    im_classified_xr = im_classified_xr.expand_dims(dim={'time':[np.datetime64(im_date)]})
+    # replace NaNs with -9999, convert data types to int
+    im_classified_xr_int = xr.where(np.isnan(im_classified_xr), -9999, im_classified_xr)
+    im_classified_xr_int.classified.data = im_classified_xr_int.classified.data.astype(int)
+    # add additional attributes for description and classes
+    im_classified_xr_int = im_classified_xr_int.assign_attrs({'Description':'Classified image',
+                                                              'NoDataValues':'-9999',
+                                                              'Classes':'1 = Snow, 2 = Shadowed snow, 3 = Firn, 4 = Ice, 5 = Rock, 6 = Water'})
+    # save to file
+    if '.nc' in im_classified_fn:
+        im_classified_xr_int.to_netcdf(out_path + im_classified_fn)
+    elif '.tif' in im_classified_fn:
+        # remove time dimension
+        im_classified_xr_int = im_classified_xr_int.drop_dims('time')
+        im_classified_xr_int.rio.to_raster(out_path + im_classified_fn)
+    print('Classified image saved to file: ' + out_path + im_classified_fn)
 
     return im_classified_xr
 
@@ -1170,7 +1267,7 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
     if len(np.where(H_snow_est_elev_norm > 0.75)[0]) > 1:
         elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
         # set all pixels above the elev_75_snow to snow (1)
-        im_classified_adj = xr.where(DEM_AOI_interp['elevation'].isel(time=0) > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
+        im_classified_adj = xr.where(DEM_AOI_interp['elevation'] > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
         im_classified_adj = im_classified_adj.squeeze(drop=True) # drop unecessary dimensions
         H_snow_est_elev_norm[bin_centers >= elev_75_snow] = 1
     else:
