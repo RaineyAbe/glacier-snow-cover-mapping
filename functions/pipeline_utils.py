@@ -192,7 +192,6 @@ def query_GEE_for_DEM(AOI, base_path, site_name, out_path=None):
         # -----Download DEM and open as xarray.Dataset
         # if DEM_download:
         print('Downloading DEM to '+out_path)
-
         # download DEM
         DEM.download(out_path+DEM_fn, region=region)
         # read DEM as xarray.Dataset
@@ -201,8 +200,8 @@ def query_GEE_for_DEM(AOI, base_path, site_name, out_path=None):
         DEM_ds = DEM_ds.rio.reproject('EPSG:'+str(epsg_UTM))
         DEM_ds = DEM_ds.rename({'band_data':'elevation'})
         # remove unnecessary data
-        if len(np.shape(DEM.elevation.data))>2:
-            DEM['elevation'] = DEM.elevation[0]
+        if len(np.shape(DEM_ds.elevation.data))>2:
+            DEM_ds['elevation'] = DEM_ds.elevation[0]
         # else:
         #     DEM_ee_im = DEM.ee_image.clip(region)
         #     DEM_ds = DEM_ee_im.wx.to_xarray(scale=res, region=region, crs='EPSG:4326')
@@ -291,7 +290,7 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
     if im_download:
         print('Downloading images to ' + out_path)
         # loop through image IDs
-        for im_ID in im_IDs[0:5]:
+        for im_ID in im_IDs[0:4]:
             # create gd.MaskedImage from image ID
             im = gd.MaskedImage.from_id(im_ID, mask=True)
             # define image filename for saving
@@ -302,18 +301,18 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
             else:
                 print(im_fn+' already exists in directory, skipping...')
             # read in xarray.DataArray
-            im_da = xr.open_dataset(im_fn)
+            im_da = rxr.open_rasterio(im_fn)
             # reproject to optimal UTM zone
             im_da = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
             # convert to xarray.DataSet
             im_ds = xr.Dataset(
                 data_vars=dict(
-                    SR_B2=(["y", "x"], im_da.band_data.data[0]),
-                    SR_B3=(["y", "x"], im_da.band_data.data[1]),
-                    SR_B4=(["y", "x"], im_da.band_data.data[2]),
-                    SR_B5=(["y", "x"], im_da.band_data.data[3]),
-                    SR_B6=(["y", "x"], im_da.band_data.data[4]),
-                    SR_B7=(["y", "x"], im_da.band_data.data[5]),
+                    SR_B2=(["y", "x"], im_da.data[0]),
+                    SR_B3=(["y", "x"], im_da.data[1]),
+                    SR_B4=(["y", "x"], im_da.data[2]),
+                    SR_B5=(["y", "x"], im_da.data[3]),
+                    SR_B6=(["y", "x"], im_da.data[4]),
+                    SR_B7=(["y", "x"], im_da.data[5]),
                 ),
                 coords=dict(
                     x = im_da.x.data,
@@ -324,13 +323,13 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
             im_dt = np.datetime64(im_fn.split('_')[-1][0:4] + '-' + im_fn.split('_')[-1][4:6] + '-' + im_fn.split('_')[-1][6:8])
             im_ds = im_ds.expand_dims({'time':[im_dt]})
             # set CRS
-            im_ds.rio.write_crs('EPSG:'+str(epsg_UTM), inplace=True)
+            im_ds.rio.write_crs('EPSG:'+str(im_da.rio.crs.to_epsg()), inplace=True)
             # add xarray.Dataset to list
             im_ds_list = im_ds_list + [im_ds]
 
     else:
         # loop through image IDs
-        for im_ID in im_IDs[0:4]:
+        for im_ID in im_IDs:
             # create gd.MaskedImage from image ID
             im_gd = gd.MaskedImage.from_id(im_ID, mask=True, region=region)
             # create ee.Image and select bands
@@ -338,7 +337,8 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
             # convert to xarray.Dataset
             im_ds = im_ee.wx.to_xarray()
             # reproject to optimal UTM zone
-            im_ds = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
+            im_ds = im_ds.rio.reproject('EPSG:'+str(epsg_UTM))
+            im_ds.rio.write_crs('EPSG:'+str(epsg_UTM), inplace=True)
             # add xarray.Dataset to list
             im_ds_list = im_ds_list + [im_ds]
 
@@ -1036,8 +1036,6 @@ def PS_adjust_image_radiometry(im_xr, im_dt, polygon_top, polygon_bottom, AOI, d
 
 
 # --------------------------------------------------
-from shapely.geometry import Polygon, MultiPolygon
-
 def classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_dict, site_name, im_classified_fn, out_path):
     '''
     Function to classify image collection using a pre-trained classifier
@@ -1086,7 +1084,6 @@ def classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_
     ds_dict = dataset_dict[dataset]
 
     # -----Crop image to the AOI
-    im_xr = im_xr.rio.write_crs('EPSG:'+str(epsg_UTM))
     im_AOI = im_xr.squeeze(dim='time', drop=True)
     if crop_to_AOI:
         mask = np.zeros((len(im_xr.y.data), len(im_xr.x.data)))
