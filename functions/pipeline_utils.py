@@ -22,6 +22,7 @@ import subprocess
 import glob
 from tqdm.auto import tqdm
 import re
+import datetime
 
 
 # --------------------------------------------------
@@ -211,12 +212,14 @@ def query_GEE_for_DEM(AOI, base_path, site_name, out_path=None):
 
 
 # --------------------------------------------------
-def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds, out_path=None):
+def query_GEE_for_imagery(dataset, AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds, out_path=None):
     '''
-    Query Google Earth Engine for Landsat 8 and 9 surface reflectance (SR) imagery.
+    Query Google Earth Engine for Landsat 8 and 9 surface reflectance (SR), Sentinel-2 top of atmosphere (TOA) or SR imagery.
 
     Parameters
     __________
+    dataset: str
+        name of dataset ('Landsat', 'Sentinel-2_SR', 'Sentinel-2_TOA', 'PlanetScope')
     AOI: geopandas.geodataframe.GeoDataFrame
         area of interest used for searching and clipping images
     date_start: str
@@ -230,7 +233,7 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
     cloud_cover_max: int
         maximum image cloud cover percentage (0-100)
     mask_clouds: bool
-        whether to mask clouds using the 'QA_PIXEL' band
+        whether to mask clouds using geedim masking tools
     out_path: str
         path where images will be downloaded
 
@@ -249,52 +252,83 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
     epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
     AOI_UTM = AOI_WGS.to_crs('EPSG:'+str(epsg_UTM))
 
-    # -----Query GEE for images
+    # -----Determine image collection to query
+    if dataset=='Landsat':
+        im_col_id = 'LANDSAT/LC08/C02/T1_L2'
+    elif dataset=='Sentinel-2_TOA':
+        im_col_id = 'COPERNICUS/S2_HARMONIZED'
+    elif dataset=='Sentinel-2_SR':
+        im_col_id = 'COPERNICUS/S2_SR_HARMONIZED'
+    else:
+        print("'dataset' variable not recognized or accepted. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. Exiting..." )
+        return 'N/A'
+
+    # -----Prepare AOI for querying GEE and geedim for imagery
+    # AOI for ee.ImageCollection
+    AOI_WGS_bb_ee = ee.Geometry.Polygon([[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
+                                          [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
+                                          [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
+                                          [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
+                                          [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
+                                          ])
+    # AOI for gd.MaskedCollection
     region = {'type': 'Polygon',
-              'coordinates':[[
-                              [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
+              'coordinates':[[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
                               [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]
-                            ]]}
-    # query geedim for imagery
-    print('Querying GEE for Landsat imagery...')
-    L = (gd.MaskedCollection.from_name('LANDSAT/LC08/C02/T1_L2')
-         .search(start_date=date_start, end_date=date_end, region=region,
-                 fill_portion=50, cloudless_portion=cloud_cover_max, mask=mask_clouds))
-                 #custom_filter="ee.Filter.calendarRange(month_start, month_end, 'month')"))
-    print('Number of images found = '+str(len(L.properties)))
-    # exit if no images were found
-    if len(L.properties)<1:
-        return 'N/A'
+                              ]]}
 
+    # -----Query GEE for images
+    # query geedim for imagery
+    print('Querying GEE for '+dataset+' imagery...')
+    # create ee.ImageCollection
+    I_ee = (ee.ImageCollection(im_col_id).filter(ee.Filter.lt("CLOUD_COVER", cloud_cover_max))
+      .filterDate(ee.Date(date_start), ee.Date(date_end))
+      .filter(ee.Filter.calendarRange(month_start, month_end, 'month'))
+      .filterBounds(AOI_WGS_bb_ee))
+    # check if any images were found
+    I_ee_size = I_ee.size().getInfo()
+    print('Number of images found = '+str(I_ee_size))
+    if I_ee_size < 1:
+        return 'N/A'
     # grab image IDs
-    iLA = [m.start() for m in re.finditer('LA', L.properties_table)] # index of "LA"s
-    im_IDs = [L.properties_table[iLA[i]:].split(' ')[0] for i in range(len(iLA))]
+    def set_id(im):
+        return im.set({'id': im.id()});
+    I_ee = I_ee.map(set_id)
+    im_IDs = I_ee.aggregate_array('id').getInfo()
 
     # -----Determine whether images must be downloaded (image sizes exceed GEE limit)
     im_download = True # wxee has a bug related to new xarray release, I think
     # Calculate width and height of AOI bounding box [m]
     AOI_UTM_bb_width = AOI_UTM.geometry[0].bounds[2] - AOI_UTM.geometry[0].bounds[0]
     AOI_UTM_bb_height = AOI_UTM.geometry[0].bounds[3] - AOI_UTM.geometry[0].bounds[1]
-    # Check if bounding box is larger than GEE image outputs (30 m resolution, 8 bands)
-    if ((AOI_UTM_bb_width / 30 * 8)*(AOI_UTM_bb_height / 30 * 8)) > 1e9:
-        im_download = True
-        print('Landsat 8/9 images must be downloaded for full spatial resolution')
+    # Check if bounding box is larger than GEE image outputs
+    if dataset=='Landsat':
+        if ((AOI_UTM_bb_width / 30 * 8)*(AOI_UTM_bb_height / 30 * 8)) > 1e9:
+            im_download = True
+            print('Landsat mages must be downloaded for full spatial resolution')
+    if (dataset=='Sentinel-2_SR') or (dataset=='Sentinel-2_TOA'):
+        if ((AOI_UTM_bb_width / 10 * 9)*(AOI_UTM_bb_height / 10 * 9)) > 1e9:
+            im_download = True
+            print('Sentinel-2_SR mages must be downloaded for full spatial resolution')
 
     # -----Convert image collection to list of xarray.Datasets
     # initialize list of xarray.Datasets
     im_ds_list = []
-    os.chdir(out_path)
     if im_download:
+        # Make directory for outputs (out_path) if it doesn't exist
+        if os.path.exists(out_path)==False:
+            os.mkdir(out_path)
+        os.chdir(out_path)
         print('Downloading images to ' + out_path)
         # loop through image IDs
-        for im_ID in im_IDs[0:4]:
+        for im_ID in im_IDs:
             # create gd.MaskedImage from image ID
-            im = gd.MaskedImage.from_id(im_ID, mask=True)
+            im = gd.MaskedImage.from_id(im_col_id+'/'+im_ID, mask=mask_clouds)
             # define image filename for saving
-            im_fn = im_ID.split('L2/')[1]+'.tif'
+            im_fn = im_ID+'.tif'
             # download if doesn't exist in directory
             if os.path.exists(out_path+im_fn)==False:
                 im.download(out_path + im_fn, region=region)
@@ -305,22 +339,46 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
             # reproject to optimal UTM zone
             im_da = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
             # convert to xarray.DataSet
-            im_ds = xr.Dataset(
-                data_vars=dict(
-                    SR_B2=(["y", "x"], im_da.data[0]),
-                    SR_B3=(["y", "x"], im_da.data[1]),
-                    SR_B4=(["y", "x"], im_da.data[2]),
-                    SR_B5=(["y", "x"], im_da.data[3]),
-                    SR_B6=(["y", "x"], im_da.data[4]),
-                    SR_B7=(["y", "x"], im_da.data[5]),
-                ),
-                coords=dict(
-                    x = im_da.x.data,
-                    y = im_da.y.data
+            if dataset=='Landsat':
+                im_ds = xr.Dataset(
+                    data_vars=dict(
+                        SR_B2=(["y", "x"], im_da.data[0]),
+                        SR_B3=(["y", "x"], im_da.data[1]),
+                        SR_B4=(["y", "x"], im_da.data[2]),
+                        SR_B5=(["y", "x"], im_da.data[3]),
+                        SR_B6=(["y", "x"], im_da.data[4]),
+                        SR_B7=(["y", "x"], im_da.data[5]),
+                    ),
+                    coords=dict(
+                        x = im_da.x.data,
+                        y = im_da.y.data
+                    )
                 )
-            )
+            elif (dataset=='Sentinel-2_TOA') or (dataset=='Sentinel-2_SR'):
+                im_ds = xr.Dataset(
+                    data_vars=dict(
+                        B2=(["y", "x"], im_da.data[1]),
+                        B3=(["y", "x"], im_da.data[2]),
+                        B4=(["y", "x"], im_da.data[3]),
+                        B5=(["y", "x"], im_da.data[4]),
+                        B6=(["y", "x"], im_da.data[5]),
+                        B7=(["y", "x"], im_da.data[6]),
+                        B8=(["y", "x"], im_da.data[7]),
+                        B11=(["y", "x"], im_da.data[10]),
+                        B12=(["y", "x"], im_da.data[11]),
+                    ),
+                    coords=dict(
+                        x = im_da.x.data,
+                        y = im_da.y.data
+                    )
+                )
+
+            # adjust image for scalar multiplier
+            # im_ds = im_ds * im.band_properties[0]['scale']
+            # remove no data values
+            im_ds = xr.where(im_ds < 0, np.nan, im_ds)
             # expand dimensions to include time
-            im_dt = np.datetime64(im_fn.split('_')[-1][0:4] + '-' + im_fn.split('_')[-1][4:6] + '-' + im_fn.split('_')[-1][6:8])
+            im_dt = np.datetime64(datetime.datetime.fromtimestamp(im.properties['system:time_start'] / 1000))
             im_ds = im_ds.expand_dims({'time':[im_dt]})
             # set CRS
             im_ds.rio.write_crs('EPSG:'+str(im_da.rio.crs.to_epsg()), inplace=True)
@@ -331,11 +389,15 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
         # loop through image IDs
         for im_ID in im_IDs:
             # create gd.MaskedImage from image ID
-            im_gd = gd.MaskedImage.from_id(im_ID, mask=True, region=region)
+            im_gd = gd.MaskedImage.from_id(im_col_id+'/'+im_ID, mask=mask_clouds, region=region)
             # create ee.Image and select bands
             im_ee = im_gd.ee_image#.select(L.refl_bands)
             # convert to xarray.Dataset
             im_ds = im_ee.wx.to_xarray()
+            # adjust image for scalar multiplier
+            # im_ds = im_ds * im.band_properties[0]['scale']
+            # remove no data values
+            im_ds = xr.where(im_ds < 0, np.nan, im_ds)
             # reproject to optimal UTM zone
             im_ds = im_ds.rio.reproject('EPSG:'+str(epsg_UTM))
             im_ds.rio.write_crs('EPSG:'+str(epsg_UTM), inplace=True)
@@ -364,220 +426,6 @@ def query_GEE_for_Landsat_SR(AOI, date_start, date_end, month_start, month_end, 
         #     mosaicImgList = uniqueDates.map(mosaicDriver)
         #     return ee.ImageCollection(mosaicImgList)
         # L_clip_mask_mosaic = merge_by_date(L_clip_mask)
-
-
-# --------------------------------------------------
-def query_GEE_for_Sentinel2(dataset, dataset_dict, site_name, AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds, S2_download, out_path=None):
-    '''
-    Query Google Earth Engine for Sentinel-2 surface reflectance (SR) imagery.
-
-    Parameters
-    ----------
-    dataset: str
-        name of dataset ('Landsat', 'Sentinel2_SR', 'Sentinel2_TOA', 'PlanetScope')
-    dataset_dict: dict
-        dictionary of parameters for each dataset
-    site_name: str
-        name of study site used for output file names
-    AOI: geopandas.geodataframe.GeoDataFrame
-        area of interest used for searching and clipping images
-    date_start: str
-        start date for image search ('YYYY-MM-DD')
-    date_end: str
-        end date for image search ('YYYY-MM-DD')
-    month_start: str
-        starting month for calendar range filtering
-    month_end: str
-        ending month for calendar range filtering
-    cloud_cover max: float
-        maximum image cloud cover percentage (0-100)
-    mask_clouds: bool
-        whether to mask clouds using the S2_CLOUDLESS data product (True or False)
-    S2_download: bool
-        whether images must be downloaded for full spatial resolution using geedim
-    out_path: str
-        path where images will be downloaded
-
-    Returns
-    ----------
-    S2_xr_fns: list
-        list of image file names saved in out_path
-    '''
-
-    # -----Reformat AOI for image filtering
-    # reproject AOI to WGS
-    AOI_WGS = AOI.to_crs('EPSG:4326')
-    # solve for optimal UTM zone
-    AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
-                    AOI_WGS.geometry[0].centroid.xy[1][0]]
-    epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
-    AOI_UTM = AOI.to_crs('EPSG:'+str(epsg_UTM))
-    # reformat AOI for clipping images
-    AOI_WGS_bb_ee = ee.Geometry.Polygon(
-                            [[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
-                              [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
-                              [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.maxy[0]],
-                              [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.maxy[0]],
-                              [AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]]]
-                            ])
-
-    # -----Subset dataset_dict to dataset
-    ds_dict = dataset_dict[dataset]
-
-    # -----Query GEE for imagery
-    if S2_download:
-        print('hello')
-    else:
-        if dataset=='Sentinel2_SR':
-            print('Querying GEE for Sentinel-2 SR imagery...')
-            S2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") # surface reflectance
-        elif dataset=='Sentinel2_TOA':
-            print('Querying GEE for Sentinel-2 TOA imagery...')
-            S2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED") # TOA
-        else:
-            print('dataset variable not recognized for Sentinel-2, exiting...')
-            return
-        # apply filters to image collection
-        S2 = (S2.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_cover_max))
-               .filterDate(ee.Date(date_start), ee.Date(date_end))
-               .filter(ee.Filter.calendarRange(month_start, month_end, 'month'))
-               .filterBounds(AOI_WGS_bb_ee))
-        #  clip images to AOI and select bands
-        def clip_image(im):
-            return im.clip(AOI_WGS_bb_ee.buffer(1000))
-        S2_band_names = [band for band in ds_dict['bands'] if 'QA' not in band]
-        S2_clip = S2.map(clip_image).select(S2_band_names)
-        if S2_clip.size().getInfo() < 1:
-            print('No images found, exiting...')
-            return
-
-        # -----Apply cloud and shadow mask
-        if mask_clouds:
-            # define thresholds for cloud mask
-            CLD_PRB_THRESH = 50
-            NIR_DRK_THRESH = 0.15
-            CLD_PRJ_DIST = 1
-            BUFFER = 50
-            # Import and filter s2cloudless
-            S2_cloudless = (ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
-                .filterBounds(AOI_WGS_bb_ee)
-                .filterDate(date_start, date_end))
-            # clip to AOI
-            S2_cloudless_clip = S2_cloudless.map(clip_image)
-            # Join the filtered s2cloudless collection to the SR collection by the 'system:index' property.
-            S2_merge = ee.ImageCollection(ee.Join.saveFirst('s2cloudless').apply(**{
-                'primary': S2_clip,
-                'secondary': S2_cloudless_clip,
-                'condition': ee.Filter.equals(**{
-                    'leftField': 'system:index',
-                    'rightField': 'system:index'
-                })
-            }))
-            def add_cloud_bands(img):
-                # Get s2cloudless image, subset the probability band.
-                cld_prb = ee.Image(img.get('s2cloudless')).select('probability')
-                # Condition s2cloudless by the probability threshold value.
-                is_cloud = cld_prb.gt(CLD_PRB_THRESH).rename('clouds')
-                # Add the cloud probability layer and cloud mask as image bands.
-                return img.addBands(ee.Image([cld_prb, is_cloud]))
-            def add_shadow_bands(img):
-                # Identify water pixels from the clouds band.
-                not_water = img.select('clouds').neq(6)
-                # Identify dark NIR pixels that are not water (potential cloud shadow pixels).
-                SR_BAND_SCALE = 1e4
-                dark_pixels = img.select('B8').lt(NIR_DRK_THRESH*SR_BAND_SCALE).multiply(not_water).rename('dark_pixels')
-                # Determine the direction to project cloud shadow from clouds (assumes UTM projection).
-                shadow_azimuth = ee.Number(90).subtract(ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE')));
-                # Project shadows from clouds for the distance specified by the CLD_PRJ_DIST input.
-                cld_proj = (img.select('probability').directionalDistanceTransform(shadow_azimuth, CLD_PRJ_DIST*10)
-                    .reproject(**{'crs': img.select(0).projection(), 'scale': 100})
-                    .select('distance')
-                    .mask()
-                    .rename('cloud_transform'))
-                # Identify the intersection of dark pixels with cloud shadow projection.
-                shadows = cld_proj.multiply(dark_pixels).rename('shadows')
-                # Add dark pixels, cloud projection, and identified shadows as image bands.
-                return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
-            def add_cld_shdw_mask(img):
-                # Add cloud component bands.
-                img_cloud = add_cloud_bands(img)
-                # Add cloud shadow component bands.
-                img_cloud_shadow = add_shadow_bands(img_cloud)
-                # Combine cloud and shadow mask, set cloud and shadow as value 1, else 0.
-                is_cld_shdw = img_cloud_shadow.select('clouds').add(img_cloud_shadow.select('shadows')).gt(0)
-                # Remove small cloud-shadow patches and dilate remaining pixels by BUFFER input.
-                # 20 m scale is for speed, and assumes clouds don't require 10 m precision.
-                is_cld_shdw = (is_cld_shdw.focalMin(2).focalMax(BUFFER*2/20)
-                    .reproject(**{'crs': img.select([0]).projection(), 'scale': 20})
-                    .rename('cloudmask'))
-                # Add the final cloud-shadow mask to the image.
-                return img_cloud_shadow.addBands(is_cld_shdw)
-            def apply_cld_shdw_mask(img):
-                # Subset the cloudmask band and invert it so clouds/shadow are 0, else 1.
-                not_cld_shdw = img.select('cloudmask').Not()
-                # Subset reflectance bands and update their masks, return the result.
-                return img.select('B.*').updateMask(not_cld_shdw)
-            # add bands for clouds, shadows, mask, and apply the mask
-            S2_merge_masked = (S2_merge.map(add_cloud_bands)
-                                       .map(add_shadow_bands)
-                                       .map(add_cld_shdw_mask)
-                                       .map(apply_cld_shdw_mask))
-        else:
-            S2_merge_masked = S2_clip
-
-        # -----Mosaic images captured the same daynum
-        def merge_by_date(im_col):
-            # convert image collection to a list
-            imgList = im_col.toList(im_col.size())
-            # driver function for mapping the unique dates
-            def uniqueDriver(image):
-                return ee.Image(image).date().format("YYYY-MM-dd")
-            uniqueDates = imgList.map(uniqueDriver).distinct()
-            # Driver function for mapping mosaics
-            def mosaicDriver(date):
-                date = ee.Date(date)
-                image = (im_col
-                       .filterDate(date, date.advance(1, "day"))
-                       .mosaic())
-                return image.set(
-                                "system:time_start", date.millis(),
-                                "system:id", date.format("YYYY-MM-dd")).clip(AOI_WGS_bb_ee.buffer(1000))
-            mosaicImgList = uniqueDates.map(mosaicDriver)
-            return ee.ImageCollection(mosaicImgList)
-        S2_merge_masked_mosaic = merge_by_date(S2_merge_masked)
-
-        # -----Filter image collection by coverage of the AOI
-        print('Adjusting and filtering image collection by AOI coverage...')
-        def get_percent_coverage(image):
-            # calculate the number of inputs
-            totPixels = ee.Number(image.unmask(1).reduceRegion(
-                reducer=ee.Reducer.count(),
-                scale=10,
-                geometry=AOI_WGS_bb_ee,
-            ).values().get(0))
-            # calculate the actual amount of pixels inside the AOI
-            actPixels = ee.Number(image.select('B2').reduceRegion(
-                reducer=ee.Reducer.count(),
-                scale=10,
-                geometry=AOI_WGS_bb_ee,
-            ).values().get(0));
-            # calculate the percent coverage of the AOI
-            perc_AOI_cover = actPixels.divide(totPixels).multiply(100).round();
-            # add perc_cover as property
-            return image.set('perc_AOI_cover', perc_AOI_cover);
-        # apply percent coverage property
-        S2_merge_masked_mosaic_AOIcover = S2_merge_masked_mosaic.map(get_percent_coverage)
-        # filter images with < 50% coverage of the AOI
-        S2_merge_masked_mosaic_AOIcover_filt = S2_merge_masked_mosaic_AOIcover.filter(ee.Filter.greaterThanOrEquals('perc_AOI_cover', 50))
-        print(str(S2_merge_masked_mosaic_AOIcover_filt.size().getInfo()) + ' images found')
-
-        # -----Remove unnecessary bands
-
-
-        # -----Sort ImageCollection by date and convert to List
-        S2_im_list = ee.ImageCollection(S2_merge_masked_mosaic_AOIcover_filt).sort('system:time_start').toList(1e3)
-
-    return S2_im_list
 
 
 # --------------------------------------------------
@@ -1162,13 +1010,13 @@ def classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI, dataset, dataset_
 
 
 # --------------------------------------------------
-def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, dataset, im_date, snowline_fn, out_path, figures_out_path, plot_results):
+def delineate_im_snowline(im_xr, im_classified, site_name, AOI, DEM, dataset_dict, dataset, im_date, snowline_fn, out_path, figures_out_path, plot_results):
     '''
     Delineate snowline(s) in classified images. Snowlines will likely not be detected in images with nearly all or no snow.
 
     Parameters
     ----------
-    im: xarray.Dataset
+    im_xr: xarray.Dataset
         input image used for plotting
     im_classified: xarray.Dataset
         classified image used to delineate snowlines
@@ -1206,11 +1054,11 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
     ds_dict = dataset_dict[dataset]
 
     # -----Define image bands
-    bands = [x for x in im.data_vars]
+    bands = [x for x in im_xr.data_vars]
     bands = [band for band in bands if 'QA' not in band]
 
     # -----Remove time dimension
-    im = im.isel(time=0)
+    im_xr = im_xr.isel(time=0)
     im_classified = im_classified.isel(time=0)
 
     # -----Create no data mask
@@ -1219,39 +1067,35 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
     no_data_polygons = []
     for s, value in rio.features.shapes(no_data_mask.astype(np.int16),
                                         mask=(no_data_mask > 0),
-                                        transform=im.rio.transform()):
+                                        transform=im_xr.rio.transform()):
         no_data_polygons.append(shape(s))
     no_data_polygons = MultiPolygon(no_data_polygons)
 
     # -----Mask the DEM using the AOI
     # create AOI mask
     mask_AOI = rio.features.geometry_mask(AOI.geometry,
-                                      out_shape=(len(DEM.y), len(DEM.x)),
-                                      transform=DEM.rio.transform(),
-                                      invert=True)
+                                          out_shape=(len(DEM.y), len(DEM.x)),
+                                          transform=DEM.rio.transform())
     # convert mask to xarray DataArray
     mask_AOI = xr.DataArray(mask_AOI , dims=("y", "x"))
     # mask DEM values outside the AOI
-    DEM_AOI = DEM.copy(deep=True)
-    DEM_AOI['elevation'].data = np.where(mask_AOI==True, DEM_AOI['elevation'].data, np.nan)
-
-    # -----Interpolate DEM to the image coordinates
-    DEM_AOI_interp = DEM_AOI.interp(x=im_classified.x.data,
-                                    y=im_classified.y.data,
-                                    method="nearest")
+    DEM_AOI = DEM.to_array() # convert to xarray.DataArray
+    DEM_AOI = xr.where(mask_AOI==False, DEM_AOI, np.nan)
 
     # -----Determine snow covered elevations
+    # interpolate DEM to image coordinates
+    DEM_AOI_interp = DEM_AOI.interp(x=im_classified.x.data, y=im_classified.y.data, method='linear')
     # create array of elevation for all un-masked pixels
-    all_elev = np.ravel(np.where(~np.isnan(im_classified.classified.data), DEM_AOI_interp.elevation.data, np.nan))
+    all_elev = np.ravel(xr.where(np.isnan(im_classified), np.nan, DEM_AOI_interp).classified.data)
     all_elev = all_elev[~np.isnan(all_elev)] # remove NaNs
     # create array of snow-covered pixel elevations
-    snow_est_elev = np.ravel(np.where(im_classified.classified.data <= 2, DEM_AOI_interp.elevation.data, np.nan))
+    snow_est_elev = np.ravel(xr.where(im_classified <= 2, DEM_AOI_interp, np.nan).classified.data)
     snow_est_elev = snow_est_elev[~np.isnan(snow_est_elev)] # remove NaNs
 
     # -----Create elevation histograms
     # determine bins to use in histograms
-    elev_min = np.fix(np.nanmin(DEM_AOI_interp.elevation.data.flatten())/10)*10
-    elev_max = np.round(np.nanmax(DEM_AOI_interp.elevation.data.flatten())/10)*10
+    elev_min = np.fix(np.nanmin(np.ravel(DEM_AOI_interp.data))/10)*10
+    elev_max = np.round(np.nanmax(np.ravel(DEM_AOI_interp.data))/10)*10
     bin_edges = np.linspace(elev_min, elev_max, num=int((elev_max-elev_min)/10 + 1))
     bin_centers = (bin_edges[1:] + bin_edges[0:-1]) / 2
     # calculate elevation histograms
@@ -1264,7 +1108,7 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
     if len(np.where(H_snow_est_elev_norm > 0.75)[0]) > 1:
         elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
         # set all pixels above the elev_75_snow to snow (1)
-        im_classified_adj = xr.where(DEM_AOI_interp['elevation'] > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
+        im_classified_adj = xr.where(DEM_AOI_interp > elev_75_snow, 1, im_classified) # set all values above elev_75_snow to snow (1)
         im_classified_adj = im_classified_adj.squeeze(drop=True) # drop unecessary dimensions
         H_snow_est_elev_norm[bin_centers >= elev_75_snow] = 1
     else:
@@ -1284,8 +1128,8 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
     for contour in contours:
         ix = np.round(contour[:,1]).astype(int)
         iy = np.round(contour[:,0]).astype(int)
-        coords = (im.isel(x=ix, y=iy).x.data, # image x coordinates
-                  im.isel(x=ix, y=iy).y.data) # image y coordinates
+        coords = (im_xr.isel(x=ix, y=iy).x.data, # image x coordinates
+                  im_xr.isel(x=ix, y=iy).y.data) # image y coordinates
         # zip points together
         xy = list(zip([x for x in coords[0]],
                       [y for y in coords[1]]))
@@ -1365,7 +1209,7 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
             ypts = ypts + [y for y in line.coords.xy[1]]
         xpts, ypts = np.array(xpts).flatten(), np.array(ypts).flatten()
         # interpolate elevation at snow line points
-        sl_est_elev = [DEM.sel(x=x, y=y, method='nearest').elevation.data[0]
+        sl_est_elev = [DEM.sel(x=x, y=y, method='nearest').elevation.data
                        for x, y in list(zip(xpts, ypts))]
 
     else:
@@ -1375,8 +1219,17 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
     # -----If no snowline exists and AOI is ~covered in snow, make sl_est_elev = min AOI elev
     if np.size(sl_est_elev)==1:
         if (np.isnan(sl_est_elev)) & (np.nanmedian(H_snow_est_elev_norm) > 0.5):
-            sl_est_elev = np.nanmin(DEM_AOI['elevation'].data)
-            sl_est_elev_median = np.nanmin(DEM_AOI['elevation'].data)
+            sl_est_elev = np.nanmin(np.ravel(DEM_AOI.data))
+            sl_est_elev_median = np.nanmin(np.ravel(DEM_AOI.data))
+
+    # -----Calculate snow-covered area (SCA) and accumulation area ratio (AAR)
+    # pixel resolution
+    dx = im_classified.x.data[1]-im_classified.x.data[0]
+    # snow-covered area
+    SCA = len(snow_est_elev)*(dx**2) # number of snow-covered pixels * pixel resolution [m^2]
+    # accumulation area ratio
+    total_area = len(all_elev)*(dx**2) # number of pixels * pixel resolution [m^2]
+    AAR = SCA / total_area
 
     # -----Compile results in dataframe
     # calculate median snow line elevation
@@ -1385,16 +1238,25 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
     snowline_df = pd.DataFrame({'study_site': site_name,
                                 'datetime': im_date,
                                 'snowlines_coords': [sl_est],
-                                'CRS': ['EPSG:'+str(im.rio.crs.to_epsg())],
-                                'snowlines_elevs': [sl_est_elev],
-                                'snowlines_elevs_median': sl_est_elev_median,
+                                'CRS': 'EPSG:'+str(im_xr.rio.crs.to_epsg()),
+                                'snowlines_elevs_m': [sl_est_elev],
+                                'snowlines_elevs_median_m': sl_est_elev_median,
+                                'SCA_m2': SCA,
+                                'AAR': AAR,
                                 'dataset': dataset,
                                 'geometry': [sl_est]
                                })
 
     # -----Save snowline df to file
-    snowline_df.to_pickle(out_path + snowline_fn)
-    print('Snowline saved to file: ' + out_path + snowline_fn)
+    if 'pkl' in snowline_fn:
+        snowline_df.to_pickle(out_path + snowline_fn)
+        print('Snowline saved to file: ' + out_path + snowline_fn)
+    elif 'csv' in snowline_fn:
+        snowline_df.to_csv(out_path + snowline_fn)
+        print('Snowline saved to file: ' + out_path + snowline_fn)
+    else:
+        print('Please specify snowline_fn with extension .pkl or .csv. Exiting...')
+        return 'N/A'
 
     # -----Plot results
     if plot_results:
@@ -1402,27 +1264,27 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
         fig, ax = plt.subplots(2, 2, figsize=(12,8), gridspec_kw={'height_ratios': [3, 1]})
         ax = ax.flatten()
         # define x and y limits
-        xmin, xmax = AOI.geometry[0].buffer(500).bounds[0]/1e3, AOI.geometry[0].buffer(500).bounds[2]/1e3
-        ymin, ymax = AOI.geometry[0].buffer(500).bounds[1]/1e3, AOI.geometry[0].buffer(500).bounds[3]/1e3
+        xmin, xmax = AOI.geometry[0].buffer(100).bounds[0]/1e3, AOI.geometry[0].buffer(100).bounds[2]/1e3
+        ymin, ymax = AOI.geometry[0].buffer(100).bounds[1]/1e3, AOI.geometry[0].buffer(100).bounds[3]/1e3
         # define colors for plotting
         color_snow = '#4eb3d3'
         color_ice = '#084081'
         color_rock = '#fdbb84'
         color_water = '#bdbdbd'
-        color_contour = '#f768a1'
         # create colormap
         colors = [color_snow, color_snow, color_ice, color_rock, color_water]
         cmp = matplotlib.colors.ListedColormap(colors)
         # RGB image
-        ax[0].imshow(np.dstack([im[ds_dict['RGB_bands'][0]].data,
-                                im[ds_dict['RGB_bands'][1]].data,
-                                im[ds_dict['RGB_bands'][2]].data]),
-                     extent=(np.min(im.x.data)/1e3, np.max(im.x.data)/1e3, np.min(im.y.data)/1e3, np.max(im.y.data)/1e3))
+        ax[0].imshow(np.dstack([im_xr[ds_dict['RGB_bands'][0]].data,
+                                im_xr[ds_dict['RGB_bands'][1]].data,
+                                im_xr[ds_dict['RGB_bands'][2]].data]),
+                     extent=(np.min(im_xr.x.data)/1e3, np.max(im_xr.x.data)/1e3, np.min(im_xr.y.data)/1e3, np.max(im_xr.y.data)/1e3))
         ax[0].set_xlabel('Easting [km]')
         ax[0].set_ylabel('Northing [km]')
         # classified image
         ax[1].imshow(im_classified['classified'].data, cmap=cmp, vmin=1, vmax=5,
-                     extent=(np.min(im_classified.x.data)/1e3, np.max(im_classified.x.data)/1e3, np.min(im_classified.y.data)/1e3, np.max(im_classified.y.data)/1e3))
+                     extent=(np.min(im_classified.x.data)/1e3, np.max(im_classified.x.data)/1e3,
+                             np.min(im_classified.y.data)/1e3, np.max(im_classified.y.data)/1e3))
         # plot dummy points for legend
         ax[1].scatter(0, 0, color=color_snow, s=50, label='snow')
         ax[1].scatter(0, 0, color=color_ice, s=50, label='ice')
@@ -1442,9 +1304,9 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
         ax[1].set_xlim(xmin, xmax)
         ax[1].set_ylim(ymin, ymax)
         # image bands histogram
-        h_b = ax[2].hist(im[ds_dict['RGB_bands'][0]].data.flatten(), color='blue', histtype='step', linewidth=2, bins=100, label="blue")
-        h_g = ax[2].hist(im[ds_dict['RGB_bands'][1]].data.flatten(), color='green', histtype='step', linewidth=2, bins=100, label="green")
-        h_r = ax[2].hist(im[ds_dict['RGB_bands'][2]].data.flatten(), color='red', histtype='step', linewidth=2, bins=100, label="red")
+        h_b = ax[2].hist(im_xr[ds_dict['RGB_bands'][0]].data.flatten(), color='blue', histtype='step', linewidth=2, bins=100, label="blue")
+        h_g = ax[2].hist(im_xr[ds_dict['RGB_bands'][1]].data.flatten(), color='green', histtype='step', linewidth=2, bins=100, label="green")
+        h_r = ax[2].hist(im_xr[ds_dict['RGB_bands'][2]].data.flatten(), color='red', histtype='step', linewidth=2, bins=100, label="red")
         ax[2].set_xlabel("Surface reflectance")
         ax[2].set_ylabel("Pixel counts")
         ax[2].legend(loc='best')
@@ -1471,13 +1333,12 @@ def delineate_im_snowline(im, im_classified, site_name, AOI, DEM, dataset_dict, 
                            [y/1e3 for y in line.coords.xy[1]],
                            '-', color='#f768a1', label='_nolegend_')
         # determine figure title and file name
-        title = im_date.replace('-','').replace(':','') + '_' + site_name + '_' + dataset + '_snowline'
+        title = im_date.replace('-','').replace(':','') + '_' + site_name + '_' + dataset + '_snow-cover'
         # add legends
         ax[0].legend(loc='best')
         ax[1].legend(loc='best')
         fig.suptitle(title)
         fig.tight_layout()
-#            plt.show()
         # save figure
         fig_fn = figures_out_path + title + '.png'
         fig.savefig(fig_fn, dpi=300, facecolor='white', edgecolor='none')
