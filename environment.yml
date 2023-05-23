@@ -4,20 +4,15 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
+  - geedim=1.7.1
+  - planet=2.0.1
   - geopandas
-  - matplotlib
-  - rasterio
-  - time
-  - earthengine-api
   - rioxarray
-  - wxee
-  - notebook
   - jupyterlab
-  - jupyterlab-git
-  - xarray
+  - matplotlib
   - seaborn
-  - planet
   - scikit-image
   - ipywidgets
+  - contextily
   - pip:
-    - geedim
+    - wxee
