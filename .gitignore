@@ -4,7 +4,4 @@
 *__pycache__*
 
 # .zip folders of study area shapefiles
-inputs-outputs/*.zip
-
-# classification pipeline scripts for all different sites
-scripts/snow_classification_pipeline_*.py
+Inputs-outputs/*.zip
