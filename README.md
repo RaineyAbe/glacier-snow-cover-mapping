@@ -51,9 +51,11 @@ Now, run the following command so that you can use the `snow-cover-mapping` envi
 
 ## Run the snow classification and snowline detection pipeline
 
-The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory, or Python scripts -- located in the `scripts` directory. To run a Notebook, open a new Terminal window, navigate (`cd`) to `snow-cover-mapping/notebooks`, activate the Conda environment (if using), and run the command `jupyter lab` or `jupyter notebook` to open the Jupyter interface in a web browser. 
+The workflow can be run using Jupyter Notebooks -- located in the `notebooks` directory, or Python scripts -- located in the `scripts` directory. To run a Notebook, open a new Terminal window, navigate (`cd`) to `snow-cover-mapping/notebooks`, activate the Conda environment (if using), and run the command `jupyter lab` or `jupyter notebook` to open the Jupyter interface in a web browser. To run a script, modify the first section in the script where indicated, then run from the Terminal. 
 
-Note: The first time you open a notebook, you will likely have to specify the kernel as `snow-cover-mapping`.  
+Notes: 
+- The first time you open a notebook, you will likely have to specify the kernel as `snow-cover-mapping`.  
+- I recommend using the Python scripts particularly for larger sites and date ranges. Anecdotally, the ipykernel has frozen or shut down when trying to access and process relatively large amounts of imagery.  
 
 #### 1. Download PlanetScope imagery 
 Download imagery either through Planet Explorer or using the Python API with the `download_PlanetScope_images.ipynb` notebook.
@@ -61,7 +63,7 @@ Download imagery either through Planet Explorer or using the Python API with the
 #### 2. Run the snow detection workflow
 Run the `snow_classification_pipeline.ipynb` notebook. 
 
-#### 3. Filter median snowline elevations time series using the `snowline_filter_fit.ipynb` notebook to mitigate the impact of poor image quality or classification. 
+#### 3. Filter median snowline elevations time series using the `filter_snowline_timeseries_automatic` notebook or script to mitigate the impact of poor image quality or classification. 
 
 <img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/filtered_snowline_timeseries_SouthCascade.png" alt="South Cascade Glacier filtered time series" width="800"/>
 
@@ -77,7 +79,7 @@ _Initial set-up:_ Before running any notebooks
     │   ├── study-sites                 # Folder where results and imagery for individual sites will be saved 
     │   │   ├── site_name               # Folder containing all data for one study site. Replace site_name with the name of your site.  
     │   │   │   ├── imagery             # Folder where images and workflow inputs and outputs are/will be saved
-    │   │   │   │   └── PlanetScope     # Folder where all PlanetScope raw and pre-processed images will be saved 
+    │   │   │   │   └── PlanetScope     # (Optional) Folder where all PlanetScope raw and pre-processed images will be saved 
     │   │   │   │       └── raw_images  # Folder containing raw PlanetScope image downloads
     │   │   │   ├── AOIs                # Folder containing outline of the Area of Interest (AOI), shapefile
     │   │   │   └── DEMs                # Folder containing digital elevation model of the AOI (optional)  
@@ -99,7 +101,7 @@ _After running the snow classification workflow:_ Includes directories that are 
     │   │   │   │   │   ├── masked      # Where masked PlanetScope images will be saved
     │   │   │   │   │   └── mosaics     # Where masked, mosaicked PlanetScope images will be saved
     │   │   │   │   ├── classified      # Where all classified images will be saved
-    │   │   │   │   └── snowlines       # Where all snowlines and ELAs will be saved
+    │   │   │   │   └── snowlines       # Where all snowline and ELA estimates will be saved
     │   │   │   ├── AOIs                # Folder containing outline of the Area of Interest (AOI), shapefile
     │   │   │   ├── DEMs                # Folder containing digital elevation model of the AOI (optional)  
     │   │   │   └── figures             # Where figures/images will be saved
