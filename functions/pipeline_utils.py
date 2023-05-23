@@ -565,7 +565,6 @@ def PlanetScope_mosaic_images_by_date(im_path, im_fns, out_path, AOI, plot_resul
 
         # define the output file name with correct extension
         out_im_fn = os.path.join(scene + ".tif")
-        print(out_im_fn)
 
         # check if image mosaic file already exists
         if os.path.exists(out_path + out_im_fn)==False:
