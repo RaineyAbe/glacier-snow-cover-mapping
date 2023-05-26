@@ -3,22 +3,16 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python=3.9
-  - rasterio
+  - python=3.11
+  - geedim=1.7.1
+  - planet=2.0.1
   - geopandas
-  - matplotlib
-  - time
-  - earthengine-api
-  - notebook
-  - geemap
-  - scikit-image
-  - keras
-  - tensorflow
-  - planet
-  - xarray
-  - wxee
-  - jupyterlab
-  - jupyterlab-git
   - rioxarray
+  - jupyterlab
+  - matplotlib
   - seaborn
-  - symfit
+  - scikit-image
+  - ipywidgets
+  - contextily
+  - pip:
+    - wxee
