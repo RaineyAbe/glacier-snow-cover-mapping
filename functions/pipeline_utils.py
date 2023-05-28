@@ -24,6 +24,8 @@ import glob
 from tqdm.auto import tqdm
 import re
 import datetime
+import ipywidgets as widgets
+from IPython.display import display, HTML
 
 
 # --------------------------------------------------
@@ -354,41 +356,12 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
             # reproject to optimal UTM zone (if necessary)
             im_da = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
             # convert to xarray.DataSet
-            if dataset=='Landsat':
-                im_ds = xr.Dataset(
-                    data_vars=dict(
-                        SR_B2=(["y", "x"], im_da.data[1]),
-                        SR_B3=(["y", "x"], im_da.data[2]),
-                        SR_B4=(["y", "x"], im_da.data[3]),
-                        SR_B5=(["y", "x"], im_da.data[4]),
-                        SR_B6=(["y", "x"], im_da.data[5]),
-                        SR_B7=(["y", "x"], im_da.data[6]),
-                    ),
-                    coords=dict(
-                        x = im_da.x.data,
-                        y = im_da.y.data
-                    )
-                )
-            elif (dataset=='Sentinel-2_TOA') or (dataset=='Sentinel-2_SR'):
-                im_ds = xr.Dataset(
-                    data_vars=dict(
-                        B2=(["y", "x"], im_da.data[1]),
-                        B3=(["y", "x"], im_da.data[2]),
-                        B4=(["y", "x"], im_da.data[3]),
-                        B5=(["y", "x"], im_da.data[4]),
-                        B6=(["y", "x"], im_da.data[5]),
-                        B7=(["y", "x"], im_da.data[6]),
-                        B8=(["y", "x"], im_da.data[7]),
-                        B11=(["y", "x"], im_da.data[10]),
-                        B12=(["y", "x"], im_da.data[11]),
-                    ),
-                    coords=dict(
-                        x = im_da.x.data,
-                        y = im_da.y.data
-                    )
-                )
-            # remove no data values
-            im_ds = xr.where(im_ds<=0, np.nan, im_ds / dataset_dict[dataset]['image_scalar'])
+            im_ds = im_ds.to_dataset('band')
+            band_names = list(dataset_dict[dataset]['bands'].keys())
+            im_ds = im_ds.rename({i + 1: name for i, name in enumerate(band_names)})
+            # account for image scalar and no data values
+            im_ds = xr.where(im_ds != dataset_dict[dataset]['no_data_value'],
+                             im_ds / dataset_dict[dataset]['image_scalar'], np.nan)
             # expand dimensions to include time
             im_dt = np.datetime64(datetime.datetime.fromtimestamp(im_da.attrs['system-time_start'] / 1000))
             im_ds = im_ds.expand_dims({'time':[im_dt]})
@@ -1445,6 +1418,121 @@ def reduce_memory_usage(df, verbose=True):
             )
         )
     return df
+
+
+# --------------------------------------------------
+def manual_snowline_filter_plot(sl_est_df, dataset_dict, L_im_path, PS_im_path, S2_SR_im_path, S2_TOA_im_path):
+    '''
+    Loop through full snowlines dataframe, plot associated image and snowline, display option to remove snowlines.
+
+    Parameters
+    ----------
+    sl_est_df: pandas.DataFrame
+        full, compiled dataframe of snowline CSV files
+    dataset_dict: dict
+        dictionary of parameters for each dataset
+    L_im_path: str
+        path in directory to raw Landsat images
+    PS_im_path: str
+        path in directory to PlanetScope image mosaics
+    S2_SR_im_path: str
+        path in directory to raw Sentnel-2 Surface Reflectance (SR) images
+    S2_TOA_im_path: str
+        path in directory to raw Sentinel-2 Top of Atmosphere reflectance (TOA) images
+
+    Returns
+    ----------
+    checkboxes: list
+        list of ipywidgets.widgets.widget_bool.Checkbox objects associated with each image for user input
+    '''
+
+    # -----Set the font size and checkbox size using CSS styling
+    style = """
+            <style>
+            .my-checkbox input[type="checkbox"] {
+                transform: scale(2.5); /* Adjust the scale factor as needed */
+                margin-right: 20px; /* Adjust the spacing between checkbox and label as needed */
+                margin-left: 20px;
+            }
+            .my-checkbox label {
+                font-size: 24px; /* Adjust the font size as needed */
+            }
+            </style>
+            """
+
+    # -----Display instructions message
+    print('Scroll through each snowline image and check boxes below "bad" snowlines to remove from time series.')
+    print('When finished, proceed to next cell.')
+
+    # -----Loop through snowlines
+    checkboxes = [] # initalize list of heckboxes for user input
+    for i in np.arange(0,len(sl_est_df)):
+
+        print(' ')
+        print(' ')
+
+        # grab snowline coordinates
+        if len(sl_est_df.iloc[i]['snowlines_coords_X']) > 2:
+            sl_X = [float(x) for x in sl_est_df.iloc[i]['snowlines_coords_X'].replace('[','').replace(']','').split(', ')]
+            sl_Y = [float(y) for y in sl_est_df.iloc[i]['snowlines_coords_Y'].replace('[','').replace(']','').split(', ')]
+        # grab snowline date
+        date = sl_est_df.iloc[i]['datetime']
+        # grab snowline dataset
+        dataset = sl_est_df.iloc[i]['dataset']
+        print(date, dataset)
+
+        # determine snowline image file name
+        im_fn=None
+        if dataset=='Landsat':
+            im_fn = glob.glob(L_im_path + '*' + date.replace('-','')[0:8]+'.tif')
+        elif dataset=='PlanetScope':
+            im_fn = glob.glob(PS_im_path + date.replace('-','')[0:8]+'.tif')
+        elif dataset=='Sentinel-2_SR':
+            im_fn = glob.glob(S2_SR_im_path + date.replace('-','')[0:8] + '*.tif')
+        elif dataset=='Sentinel-2_TOA':
+            im_fn = glob.glob(S2_TOA_im_path + date.replace('-','')[0:8] + '*.tif')
+
+        if im_fn:
+            im_fn = im_fn[0]
+        else:
+            print('No image found in file')
+            continue
+        print(im_fn)
+
+        # load image
+        im_da = rxr.open_rasterio(im_fn)
+        im_ds = im_da.to_dataset('band')
+        band_names = list(dataset_dict[dataset]['bands'].keys())
+        im_ds = im_ds.rename({i + 1: name for i, name in enumerate(band_names)})
+        im_ds = xr.where(im_ds!=dataset_dict[dataset]['no_data_value'],
+                         im_ds / dataset_dict[dataset]['image_scalar'], np.nan)
+        # plot
+        fig, ax = plt.subplots(1, 1, figsize=(6,6))
+        RGB_bands = dataset_dict[dataset]['RGB_bands']
+        ax.imshow(np.dstack([im_ds[RGB_bands[0]], im_ds[RGB_bands[1]], im_ds[RGB_bands[2]]]),
+                  extent=(np.min(im_ds.x.data)/1e3, np.max(im_ds.x.data)/1e3,
+                          np.min(im_ds.y.data)/1e3, np.max(im_ds.y.data)/1e3))
+        if len(sl_est_df.iloc[i]['snowlines_coords_X']) > 2:
+            ax.plot([x/1e3 for x in sl_X], [y/1e3 for y in sl_Y], '.m', markersize=2, label='snowline')
+            ax.legend(loc='best')
+        else:
+            print('No snowline coordinates detected')
+        ax.set_xlabel('Easting [km]')
+        ax.set_ylabel('Northing [km]')
+        ax.set_title(date)
+        plt.show()
+
+        # create and display checkbox
+        checkbox = widgets.Checkbox(value=False, description='Remove snowline', indent=False)
+        checkbox.add_class('my-checkbox')
+        display(HTML(style))
+        display(checkbox)
+
+        # add checkbox to list of checkboxes
+        checkboxes += [checkbox]
+
+    return checkboxes
+
 
 # --------------------------------------------------
 def fourier_series_symb(x, f, n=0):
