@@ -356,7 +356,7 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
             # reproject to optimal UTM zone (if necessary)
             im_da = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
             # convert to xarray.DataSet
-            im_ds = im_ds.to_dataset('band')
+            im_ds = im_da.to_dataset('band')
             band_names = list(dataset_dict[dataset]['bands'].keys())
             im_ds = im_ds.rename({i + 1: name for i, name in enumerate(band_names)})
             # account for image scalar and no data values
