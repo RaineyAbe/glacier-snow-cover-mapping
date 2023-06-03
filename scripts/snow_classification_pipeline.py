@@ -84,7 +84,7 @@ import pandas as pd
 import sys
 import ee
 import geedim as gd
-import pickle
+import json
 from tqdm.auto import tqdm
 from joblib import dump, load
 from shapely.geometry import MultiPolygon, Polygon
@@ -103,8 +103,7 @@ sys.path.insert(1, base_path+'functions/')
 import pipeline_utils as f
 
 # -----Load dataset dictionary
-with open(base_path + 'inputs-outputs/datasets_characteristics.pkl', 'rb') as fn:
-    dataset_dict = pickle.load(fn)
+dataset_dict = json.load(open(base_path + 'inputs-outputs/datasets_characteristics.json'))
 
 # -----Authenticate and initialize GEE
 gd.Initialize()
@@ -152,8 +151,8 @@ if 1 in steps_to_run:
     # -----Load trained classifier and feature columns
     clf_fn = base_path+'inputs-outputs/Sentinel-2_TOA_classifier_all_sites.joblib'
     clf = load(clf_fn)
-    feature_cols_fn = base_path+'inputs-outputs/Sentinel-2_TOA_feature_columns.pkl'
-    feature_cols = pickle.load(open(feature_cols_fn,'rb'))
+    feature_cols_fn = base_path+'inputs-outputs/Sentinel-2_TOA_feature_columns.json'
+    feature_cols = json.load(open(feature_cols_fn))
 
     # -----Loop through images
     if type(im_list)==str: # check that images were found
@@ -224,8 +223,8 @@ if 2 in steps_to_run:
     # -----Load trained classifier and feature columns
     clf_fn = base_path+'inputs-outputs/Sentinel-2_SR_classifier_all_sites.joblib'
     clf = load(clf_fn)
-    feature_cols_fn = base_path+'inputs-outputs/Sentinel-2_SR_feature_columns.pkl'
-    feature_cols = pickle.load(open(feature_cols_fn,'rb'))
+    feature_cols_fn = base_path+'inputs-outputs/Sentinel-2_SR_feature_columns.json'
+    feature_cols = json.load(open(feature_cols_fn))
 
     # -----Loop through images
     if type(im_list)==str: # check that images were found
@@ -299,8 +298,8 @@ if 3 in steps_to_run:
     # -----Load trained classifier and feature columns
     clf_fn = base_path+'inputs-outputs/Landsat_classifier_all_sites.joblib'
     clf = load(clf_fn)
-    feature_cols_fn = base_path+'inputs-outputs/Landsat_feature_columns.pkl'
-    feature_cols = pickle.load(open(feature_cols_fn,'rb'))
+    feature_cols_fn = base_path+'inputs-outputs/Landsat_feature_columns.json'
+    feature_cols = json.load(open(feature_cols_fn))
 
     # -----Loop through images
     if type(im_list)==str: # check that images were found
@@ -389,8 +388,8 @@ if 4 in steps_to_run:
     # -----Load trained classifier and feature columns
     clf_fn = base_path+'inputs-outputs/PlanetScope_classifier_all_sites.joblib'
     clf = load(clf_fn)
-    feature_cols_fn = base_path+'inputs-outputs/PlanetScope_feature_columns.pkl'
-    feature_cols = pickle.load(open(feature_cols_fn,'rb'))
+    feature_cols_fn = base_path+'inputs-outputs/PlanetScope_feature_columns.json'
+    feature_cols = json.load(open(feature_cols_fn))
     dataset = 'PlanetScope'
 
     # -----Adjust image radiometry
@@ -439,7 +438,7 @@ if 4 in steps_to_run:
         snowline_fn = im_date.replace('-','').replace(':','') + '_' + site_name + '_' + dataset + '_snowline.csv'
         if os.path.exists(snowlines_path + snowline_fn):
             print('Snowline already exists in file, loading...')
-            snowline_df = pd.read_pickle(snowlines_path + snowline_fn)
+            snowline_df = pd.read_csv(snowlines_path + snowline_fn)
         else:
             snowline_df = f.delineate_image_snowline(im_adj, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
                                                      im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
