@@ -357,7 +357,7 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
             im_da = im_da.rio.reproject('EPSG:'+str(epsg_UTM))
             # convert to xarray.DataSet
             im_ds = im_da.to_dataset('band')
-            band_names = list(dataset_dict[dataset]['bands'].keys())
+            band_names = list(dataset_dict[dataset]['refl_bands'].keys())
             im_ds = im_ds.rename({i + 1: name for i, name in enumerate(band_names)})
             # account for image scalar and no data values
             im_ds = xr.where(im_ds != dataset_dict[dataset]['no_data_value'],
@@ -876,7 +876,7 @@ def classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI, DEM, dataset, dat
     ds_dict = dataset_dict[dataset]
 
     # -----Define image bands and capture date
-    bands = [band for band in ds_dict['bands'] if 'QA' not in band]
+    bands = [band for band in ds_dict['refl_bands'] if 'QA' not in band]
     im_date = np.datetime64(str(im_xr.time.data[0])[0:19], 'ns')
     print(im_date)
 
@@ -927,52 +927,30 @@ def classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI, DEM, dataset, dat
     snow_est_classified_mask = xr.where(im_classified_xr<=2, True, False).classified.data
     snow_est_elev = DEM_AOI_interp.elevation.data[snow_est_classified_mask]
 
-    # -----Create elevation histograms
-    # determine bins to use in histograms
-    elev_min = np.fix(np.nanmin(np.ravel(DEM_AOI_interp.elevation.data))/10)*10
-    elev_max = np.round(np.nanmax(np.ravel(DEM_AOI_interp.elevation.data))/10)*10
-    bin_edges = np.linspace(elev_min, elev_max, num=int((elev_max-elev_min)/10 + 1))
-    bin_centers = (bin_edges[1:] + bin_edges[0:-1]) / 2
-    # calculate elevation histograms
-    H_elev = np.histogram(all_elev, bins=bin_edges)[0]
-    H_snow_est_elev = np.histogram(snow_est_elev, bins=bin_edges)[0]
-    H_snow_est_elev_norm = H_snow_est_elev / H_elev
-
-    # -----Make all pixels at elevation bins with >75% snow coverage = snow
-    # determine elevation with > 75% snow coverage
-    if len(np.where(H_snow_est_elev_norm > 0.75)[0]) > 1:
-        elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
-        # set all pixels above the elev_75_snow to snow (1)
-        im_classified_xr.classified.data[DEM_AOI_interp.elevation.data > elev_75_snow] = 1
-        im_classified_xr_adj = im_classified_xr#.squeeze(drop=True) # drop unecessary dimensions
-        H_snow_est_elev_norm[bin_centers >= elev_75_snow] = 1
-    else:
-        im_classified_xr_adj = im_classified_xr#.squeeze(drop=True)
-
     # -----Preprare classified image for saving
     # add elevation band
-    im_classified_xr_adj['elevation'] = (('y', 'x'), DEM_AOI_interp.elevation.data)
+    im_classified_xr['elevation'] = (('y', 'x'), DEM_AOI_interp.elevation.data)
     # add time dimension
-    im_classified_xr_adj = im_classified_xr_adj.expand_dims(dim={'time':[np.datetime64(im_date)]})
+    im_classified_xr = im_classified_xr.expand_dims(dim={'time':[np.datetime64(im_date)]})
     # add additional attributes for description and classes
-    im_classified_xr_adj = im_classified_xr_adj.assign_attrs({'Description':'Classified image',
-                                                              'NoDataValues':'-9999',
-                                                              'Classes':'1 = Snow, 2 = Shadowed snow, 3 = Firn, 4 = Ice, 5 = Rock, 6 = Water'})
+    im_classified_xr = im_classified_xr.assign_attrs({'Description':'Classified image',
+                                                      'NoDataValues':'-9999',
+                                                      'Classes':'1 = Snow, 2 = Shadowed snow, 3 = Firn, 4 = Ice, 5 = Rock, 6 = Water'})
     # replace NaNs with -9999, convert data types to int
-    im_classified_xr_adj_int = xr.where(np.isnan(im_classified_xr_adj), -9999, im_classified_xr_adj)
-    im_classified_xr_adj_int.classified.data = im_classified_xr_adj_int.classified.data.astype(int)
-    im_classified_xr_adj_int.elevation.data = im_classified_xr_adj_int.elevation.data.astype(int)
+    im_classified_xr_int = xr.where(np.isnan(im_classified_xr), -9999, im_classified_xr)
+    im_classified_xr_int.classified.data = im_classified_xr_int.classified.data.astype(int)
+    im_classified_xr_int.elevation.data = im_classified_xr_int.elevation.data.astype(int)
 
     # -----Save to file
     if '.nc' in im_classified_fn:
-        im_classified_xr_adj_int.to_netcdf(out_path + im_classified_fn)
+        im_classified_xr_int.to_netcdf(out_path + im_classified_fn)
     elif '.tif' in im_classified_fn:
         # remove time dimension
         # im_classified_xr_adj_int = im_classified_xr_adj_int.drop_dims('time')
-        im_classified_xr_adj_int.rio.to_raster(out_path + im_classified_fn)
+        im_classified_xr_int.rio.to_raster(out_path + im_classified_fn)
     print('Classified image saved to file: ' + out_path + im_classified_fn)
 
-    return im_classified_xr_adj
+    return im_classified_xr
 
 
 # --------------------------------------------------
@@ -1019,7 +997,6 @@ def delineate_image_snowline(im_xr, im_classified, site_name, AOI, dataset_dict,
 
     # -----Define image bands
     bands = [x for x in im_xr.data_vars]
-    bands = [band for band in bands if 'QA' not in band]
 
     # -----Remove time dimension
     im_xr = im_xr.isel(time=0)
@@ -1053,9 +1030,21 @@ def delineate_image_snowline(im_xr, im_classified, site_name, AOI, dataset_dict,
     H_snow_est_elev = np.histogram(snow_est_elev, bins=bin_edges)[0]
     H_snow_est_elev_norm = H_snow_est_elev / H_elev
 
+    # -----Make all pixels at elevation bins with >75% snow coverage = snow
+    # determine elevation with > 75% snow coverage
+    if len(np.where(H_snow_est_elev_norm > 0.75)[0]) > 1:
+        elev_75_snow = bin_centers[np.where(H_snow_est_elev_norm > 0.75)[0][0]]
+        # make a copy of im_classified for adjusting
+        im_classified_adj = im_classified
+        # set all pixels above the elev_75_snow to snow (1)
+        im_classified_adj['classified']  = xr.where(im_classified_adj['elevation'] > elev_75_snow, 1, im_classified_adj['classified'])
+        # H_snow_est_elev_norm[bin_centers >= elev_75_snow] = 1
+    else:
+        im_classified_adj = im_classified
+
     # -----Delineate snow lines
     # create binary snow matrix
-    im_binary = xr.where(im_classified  > 2, 1, 0)
+    im_binary = xr.where(im_classified_adj  > 2, 1, 0)
     # apply median filter to binary image with kernel_size of 1 pixel (~30 m)
     im_binary_filt = im_binary['classified'].data
     # fill holes in binary image (0s within 1s = 1)
@@ -1066,8 +1055,8 @@ def delineate_image_snowline(im_xr, im_classified, site_name, AOI, dataset_dict,
     contours_coords = []
     for contour in contours:
         # convert image pixel coordinates to real coordinates
-        fx = interp1d(range(0,len(im_classified.x.data)), im_classified.x.data)
-        fy = interp1d(range(0,len(im_classified.y.data)), im_classified.y.data)
+        fx = interp1d(range(0,len(im_classified_adj.x.data)), im_classified_adj.x.data)
+        fy = interp1d(range(0,len(im_classified_adj.y.data)), im_classified_adj.y.data)
         coords = (fx(contour[:,1]), fy(contour[:,0]))
         # zip points together
         xy = list(zip([x for x in coords[0]],
@@ -1213,12 +1202,7 @@ def delineate_image_snowline(im_xr, im_classified, site_name, AOI, dataset_dict,
         xmin, xmax = AOI.geometry[0].buffer(100).bounds[0]/1e3, AOI.geometry[0].buffer(100).bounds[2]/1e3
         ymin, ymax = AOI.geometry[0].buffer(100).bounds[1]/1e3, AOI.geometry[0].buffer(100).bounds[3]/1e3
         # define colors for plotting
-        color_snow = '#4eb3d3'
-        color_firn = '#756bb1'
-        color_ice = '#084081'
-        color_rock = '#fdbb84'
-        color_water = '#bdbdbd'
-        colors = [color_snow, color_snow, color_firn, color_ice, color_rock, color_water]
+        colors = list(dataset_dict['classified_image']['class_colors'].values())
         cmp = matplotlib.colors.ListedColormap(colors)
         # RGB image
         ax[0].imshow(np.dstack([im_xr[ds_dict['RGB_bands'][0]].data,
@@ -1232,11 +1216,11 @@ def delineate_image_snowline(im_xr, im_classified, site_name, AOI, dataset_dict,
                      extent=(np.min(im_classified.x.data)/1e3, np.max(im_classified.x.data)/1e3,
                              np.min(im_classified.y.data)/1e3, np.max(im_classified.y.data)/1e3))
         # plot dummy points for legend
-        ax[1].scatter(0, 0, color=color_snow, s=50, label='snow')
-        ax[1].scatter(0, 0, color=color_firn, s=50, label='firn')
-        ax[1].scatter(0, 0, color=color_ice, s=50, label='ice')
-        ax[1].scatter(0, 0, color=color_rock, s=50, label='rock')
-        ax[1].scatter(0, 0, color=color_water, s=50, label='water')
+        ax[1].scatter(0, 0, color=colors[0], s=50, label='Snow')
+        ax[1].scatter(0, 0, color=colors[1], s=50, label='Shadowed snow')
+        ax[1].scatter(0, 0, color=colors[2], s=50, label='Ice')
+        ax[1].scatter(0, 0, color=colors[3], s=50, label='Rock')
+        ax[1].scatter(0, 0, color=colors[4], s=50, label='Water')
         ax[1].set_xlabel('Easting [km]')
         # AOI
         for j, geom in enumerate(AOI.geometry[0].boundary.geoms):
@@ -1259,7 +1243,7 @@ def delineate_image_snowline(im_xr, im_classified, site_name, AOI, dataset_dict,
         ax[2].legend(loc='best')
         ax[2].grid()
         # normalized snow elevations histogram
-        ax[3].bar(bin_centers, H_snow_est_elev_norm, width=(bin_centers[1]-bin_centers[0]), color=color_snow, align='center')
+        ax[3].bar(bin_centers, H_snow_est_elev_norm, width=(bin_centers[1]-bin_centers[0]), color=colors[0], align='center')
         ax[3].set_xlabel("Elevation [m]")
         ax[3].set_ylabel("Fraction snow-covered")
         ax[3].grid()
@@ -1502,7 +1486,7 @@ def manual_snowline_filter_plot(sl_est_df, dataset_dict, L_im_path, PS_im_path, 
         # load image
         im_da = rxr.open_rasterio(im_fn)
         im_ds = im_da.to_dataset('band')
-        band_names = list(dataset_dict[dataset]['bands'].keys())
+        band_names = list(dataset_dict[dataset]['refl_bands'].keys())
         im_ds = im_ds.rename({i + 1: name for i, name in enumerate(band_names)})
         im_ds = xr.where(im_ds!=dataset_dict[dataset]['no_data_value'],
                          im_ds / dataset_dict[dataset]['image_scalar'], np.nan)
