@@ -1,0 +1,1 @@
+{"Dataset": "Landsat", "Overall accuracy": 0.9479695431472082, "Kappa score": 0.89225908109415, "Confusion matrix": {"TP": "600", "TN": "894", "FP": "21", "FN": "61"}, "N": 1576}

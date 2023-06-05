@@ -1,0 +1,1 @@
+{"Dataset": "Sentinel-2_TOA", "Overall accuracy": 0.9150292087095061, "Kappa score": 0.8294233412824049, "Confusion matrix": {"TP": "774", "TN": "949", "FP": "14", "FN": "146"}, "N": 1883}

@@ -5,3 +5,6 @@
 
 # .zip folders of study area shapefiles
 Inputs-outputs/*.zip
+
+# PyCharm files
+.idea*
