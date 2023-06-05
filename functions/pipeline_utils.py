@@ -1,6 +1,8 @@
-# Functions for image adjustment and snow classification in Landsat, Sentinel-2, and PlanetScope imagery
-# Rainey Aberle
-# 2023
+"""
+Functions for image querying in Google Earth Engine, image adjustment, and snow detection in Landsat, Sentinel-2, and PlanetScope imagery
+Rainey Aberle
+2023
+"""
 
 import math
 import geopandas as gpd
@@ -24,8 +26,6 @@ import glob
 from tqdm.auto import tqdm
 import re
 import datetime
-import ipywidgets as widgets
-from IPython.display import display, HTML
 
 
 # --------------------------------------------------
@@ -43,7 +43,7 @@ def convert_wgs_to_utm(lon: float, lat: float):
     Returns
     ----------
     epsg_code: str
-        optimal UTM zone
+        optimal UTM zone, e.g. "32606"
     '''
     utm_band = str((math.floor((lon + 180) / 6 ) % 60) + 1)
     if len(utm_band) == 1:
@@ -221,6 +221,7 @@ def query_GEE_for_DEM(AOI, base_path, site_name, out_path=None):
 def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, month_start, month_end, cloud_cover_max, mask_clouds, out_path=None):
     '''
     Query Google Earth Engine for Landsat 8 and 9 surface reflectance (SR), Sentinel-2 top of atmosphere (TOA) or SR imagery.
+    Images captured within the hour will be mosaicked.
 
     Parameters
     __________
@@ -248,7 +249,7 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
     Returns
     __________
     im_ds_list: list
-        list of xarray.Datasets, masked and filtered using AOI coverage
+        list of xarray.Datasets, filtered using AOI coverage
     '''
 
     # -----Reformat AOI for image filtering
@@ -260,7 +261,7 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
     epsg_UTM = convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
     AOI_UTM = AOI_WGS.to_crs('EPSG:'+str(epsg_UTM))
 
-    # -----Prepare AOI for querying geedim
+    # -----Prepare AOI for querying geedim (AOI bounding box)
     region = {'type': 'Polygon',
               'coordinates':[[[AOI_WGS.geometry.bounds.minx[0], AOI_WGS.geometry.bounds.miny[0]],
                               [AOI_WGS.geometry.bounds.maxx[0], AOI_WGS.geometry.bounds.miny[0]],
@@ -278,43 +279,17 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
         # Landsat 9
         im_col_gd_9 = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start, end_date=date_end, region=region,
                                                                                     cloudless_portion=100-cloud_cover_max, fill_portion=70)
-        # check if any images were found
-        im_IDs = sorted(list(im_col_gd_8.properties) + list(im_col_gd_9.properties)) # grab list of image IDs
-        if len(im_IDs) < 1:
-            print('No images found, exiting...')
-            return 'N/A'
-        # remove images outside the month range
-        im_IDs_filt = [im_ID for im_ID in im_IDs if (int(im_ID[-4:-2]) > month_start) and (int(im_ID[-4:-2]) < month_end)]
     elif dataset=='Sentinel-2_TOA':
         im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start, end_date=date_end, region=region,
                                                                                      cloudless_portion=100-cloud_cover_max, fill_portion=70)
-        # check if any images were found
-        im_IDs = sorted(list(im_col_gd.properties)) # grab list of image IDs
-        if len(im_IDs) < 1:
-            print('No images found. Exiting...')
-            return 'N/A'
-        # remove images outside the month range
-        im_IDs_filt = [im_ID for im_ID in im_IDs if (int(im_ID.split('/')[-1][4:6]) > month_start) and (int(im_ID.split('/')[-1][4:6]) < month_end)]
     elif dataset=='Sentinel-2_SR':
         im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start, end_date=date_end, region=region,
                                                                                      cloudless_portion=100-cloud_cover_max, fill_portion=70)
-        # check if any images were found
-        im_IDs = sorted(list(im_col_gd.properties)) # grab list of image IDs
-        if len(im_IDs) < 1:
-            print('No images found. Exiting...')
-            return 'N/A'
-        # remove images outside the month range
-        im_IDs_filt = [im_ID for im_ID in im_IDs if (int(im_ID.split('/')[-1][4:6]) > month_start) and (int(im_ID.split('/')[-1][4:6]) < month_end)]
     else:
         print("'dataset' variable not recognized or accepted. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. Exiting..." )
         return 'N/A'
-    # check if any images are left after filtering for months
-    print('Number of images found = '+str(len(im_IDs_filt)))
-    if len(im_IDs_filt) < 1:
-        print('Exiting...')
-        return 'N/A'
 
-    # -----Determine whether images must be downloaded (image sizes exceed GEE limit)
+    # -----Determine whether images must be downloaded (if image sizes exceed GEE limit)
     im_download = True
     ### NOTE: wxee has a bug related to new xarray release (xarray.open_rasterio no longer functional) - must download all images
     # Calculate width and height of AOI bounding box [m]
@@ -330,25 +305,101 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
     #         im_download = True
     #         print('Sentinel-2_SR mages must be downloaded for full spatial resolution')
 
-    # -----Convert image collection to list of xarray.Datasets
+    # -----Filter images by month then  mosaic images captured in the same hour
+    def filter_mosaic_images(im_col_gd):
+        # filter images outside month range and check if any images were found
+        # Create lists of image properties
+        properties = im_col_gd.properties
+        ims = dict(properties).keys()
+        im_IDs = [properties[im]['system:id'] for im in ims]
+        # return if no images found
+        if len(im_IDs) < 1:
+            return 'N/A'
+        # Remove datetimes outside the specified month range
+        im_dts = np.array([datetime.datetime.utcfromtimestamp(properties[im]['system:time_start'] / 1000) for im in ims])
+        im_dts = [im_dt for im_dt in im_dts if (im_dt.month >= month_start) and (im_dt.month <= month_end)]
+        # return if no images found after filtering by month range
+        if len(im_dts) < 1:
+            return 'N/A'
+
+        # Grab all unique hours
+        hours = np.array(im_dts, dtype='datetime64[h]')
+        unique_hours = sorted(set(hours))
+        # Loop through unique_hours
+        im_gd_list = [] # initialize list of gd.MaskedImages
+        for hour in unique_hours:
+            # find indices of images captured within the hour
+            I = np.ravel(np.argwhere(hours==hour))
+            # if more than one image captured within the hour, create composite
+            if len(I) > 1:
+                # grab all IDs of images captured within the hour
+                IDs_hour = [im_IDs[i] for i in I]
+                # create list of MaskedImages from IDs
+                im_list_hour = [gd.MaskedImage.from_id(ID) for ID in IDs_hour]
+                # combine into new MaskedCollection
+                im_collection = gd.MaskedCollection.from_list(im_list_hour)
+                # create image composite
+                im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
+                                                       mask=mask_clouds, region=region)
+                # append to image list
+                im_gd_list.append(im_composite)
+            # if only one image captured within the hour, just add the image to list
+            else:
+                # grab ID of image captured within the hour
+                ID_hour = im_IDs[int(I)]
+                # create single MaskedImage from ID
+                im = gd.MaskedImage.from_id(ID_hour, mask=mask_clouds, region=region)
+                # append to image list
+                im_gd_list.append(im)
+        return im_gd_list
+    # Mosaic Landsat 8 and 9 separately
+    if dataset=='Landsat':
+        im_gd_list_8 = filter_mosaic_images(im_col_gd_8)
+        im_gd_list_9 = filter_mosaic_images(im_col_gd_9)
+        if (im_gd_list_8=='N/A') and (im_gd_list_9=='N/A'):
+            im_gd_list = 'N/A'
+        elif (im_gd_list_9=='N/A'):
+            im_gd_list = im_gd_list_8
+        elif (im_gd_list_8=='N/A'):
+            im_gd_list = im_gd_list_9
+        else:
+            im_gd_list = list(im_gd_list_8) + list(im_gd_list_9)
+    else:
+        im_gd_list = filter_mosaic_images(im_col_gd)
+    # Return if no images were found
+    if im_gd_list=='N/A':
+        print('No images found, exiting...')
+        return 'N/A'
+
+    # -----Convert list of gd.MaskedImages to list of xarray.Datasets
     # initialize list of xarray.Datasets
     im_ds_list = []
     if im_download:
         # Make directory for outputs (out_path) if it doesn't exist
         if os.path.exists(out_path)==False:
             os.mkdir(out_path)
+            print('Made directory for image downloads: '+out_path)
         os.chdir(out_path)
         print('Downloading images to ' + out_path)
         # loop through image IDs
-        for im_ID in tqdm(im_IDs_filt):
+        for im_gd in tqdm(im_gd_list):
             # define image filename for saving
-            im_fn = im_ID.split('/')[-1]+'.tif'
+            im_fn = im_gd.id.split('/')[-1]+'.tif'
+            # adust file name according to dataset
+            if dataset=='Landsat':
+                if 'MOSAIC' in im_fn:
+                    im_fn = 'Landsat_' + im_fn[0:10].replace('_','') + '_MOSAIC.tif'
+                else:
+                    im_fn = 'Landsat_' + im_fn[-12:]
+            elif 'Sentinel-2' in dataset:
+                if 'MOSAIC' in im_fn:
+                    im_fn = dataset + '_' + im_fn[0:10].replace('_','') + '_MOSAIC.tif'
+                else:
+                    im_fn = dataset + '_' + im_fn[0:8] + '.tif'
             # download if doesn't exist in directory
             if os.path.exists(out_path+im_fn)==False:
-                # create gd.MaskedImage from image ID
-                im_gd = gd.MaskedImage.from_id(im_ID, mask=mask_clouds)
                 im_gd.download(out_path + im_fn, region=region, scale=dataset_dict[dataset]['resolution_m'],
-                               bands=im_gd.refl_bands)
+                               crs='EPSG:'+epsg_UTM, bands=im_gd.refl_bands)
             else:
                 print(im_fn+' already exists in directory, skipping...')
             # read in xarray.DataArray
@@ -370,45 +421,24 @@ def query_GEE_for_imagery(dataset, dataset_dict, AOI, date_start, date_end, mont
             # add xarray.Dataset to list
             im_ds_list.append(im_ds)
 
-    else:
-        # loop through image IDs
-        for im_ID in tqdm(im_IDs_filt):
-            # create gd.MaskedImage from image ID
-            im_gd = gd.MaskedImage.from_id(im_col_id+'/'+im_ID, mask=mask_clouds, region=region)
-            # create ee.Image and select bands
-            im_ee = im_gd.ee_image#.select(L.refl_bands)
-            # convert to xarray.Dataset
-            im_ds = im_ee.wx.to_xarray()
-            # remove no data values
-            im_ds = xr.where(im_ds < 0, np.nan, im_ds)
-            # reproject to optimal UTM zone
-            im_ds = im_ds.rio.reproject('EPSG:'+str(epsg_UTM))
-            im_ds.rio.write_crs('EPSG:'+str(epsg_UTM), inplace=True)
-            # add xarray.Dataset to list
-            im_ds_list.append(im_ds)
+    # else:
+    #     # loop through image IDs
+    #     for im_ID in tqdm(im_IDs_filt):
+    #         # create gd.MaskedImage from image ID
+    #         im_gd = gd.MaskedImage.from_id(im_col_id+'/'+im_ID, mask=mask_clouds, region=region)
+    #         # create ee.Image and select bands
+    #         im_ee = im_gd.ee_image#.select(L.refl_bands)
+    #         # convert to xarray.Dataset
+    #         im_ds = im_ee.wx.to_xarray()
+    #         # remove no data values
+    #         im_ds = xr.where(im_ds < 0, np.nan, im_ds)
+    #         # reproject to optimal UTM zone
+    #         im_ds = im_ds.rio.reproject('EPSG:'+str(epsg_UTM))
+    #         im_ds.rio.write_crs('EPSG:'+str(epsg_UTM), inplace=True)
+    #         # add xarray.Dataset to list
+    #         im_ds_list.append(im_ds)
 
     return im_ds_list
-
-        # mosaic images captured the same day
-        # def merge_by_date(im_col):
-        #     # convert image collection to a list
-        #     imgList = im_col.toList(im_col.size())
-        #     # driver function for mapping the unique dates
-        #     def uniqueDriver(image):
-        #         return ee.Image(image).date().format("YYYY-MM-dd")
-        #     uniqueDates = imgList.map(uniqueDriver).distinct()
-        #     # Driver function for mapping mosaics
-        #     def mosaicDriver(date):
-        #         date = ee.Date(date)
-        #         image = (im_col
-        #                .filterDate(date, date.advance(1, "day"))
-        #                .mosaic())
-        #         return image.set(
-        #                         "system:time_start", date.millis(),
-        #                         "system:id", date.format("YYYY-MM-dd")).clip(AOI_WGS_bb_ee.buffer(1000))
-        #     mosaicImgList = uniqueDates.map(mosaicDriver)
-        #     return ee.ImageCollection(mosaicImgList)
-        # L_clip_mask_mosaic = merge_by_date(L_clip_mask)
 
 
 # --------------------------------------------------
@@ -1212,7 +1242,7 @@ def delineate_image_snowline(im_xr, im_classified, site_name, AOI, dataset_dict,
         ax[0].set_xlabel('Easting [km]')
         ax[0].set_ylabel('Northing [km]')
         # classified image
-        ax[1].imshow(im_classified['classified'].data, cmap=cmp, vmin=1, vmax=6,
+        ax[1].imshow(im_classified['classified'].data, cmap=cmp, clim=(1,5),
                      extent=(np.min(im_classified.x.data)/1e3, np.max(im_classified.x.data)/1e3,
                              np.min(im_classified.y.data)/1e3, np.max(im_classified.y.data)/1e3))
         # plot dummy points for legend
@@ -1402,323 +1432,3 @@ def reduce_memory_usage(df, verbose=True):
             )
         )
     return df
-
-
-# --------------------------------------------------
-def manual_snowline_filter_plot(sl_est_df, dataset_dict, L_im_path, PS_im_path, S2_SR_im_path, S2_TOA_im_path):
-    '''
-    Loop through full snowlines dataframe, plot associated image and snowline, display option to remove snowlines.
-
-    Parameters
-    ----------
-    sl_est_df: pandas.DataFrame
-        full, compiled dataframe of snowline CSV files
-    dataset_dict: dict
-        dictionary of parameters for each dataset
-    L_im_path: str
-        path in directory to raw Landsat images
-    PS_im_path: str
-        path in directory to PlanetScope image mosaics
-    S2_SR_im_path: str
-        path in directory to raw Sentnel-2 Surface Reflectance (SR) images
-    S2_TOA_im_path: str
-        path in directory to raw Sentinel-2 Top of Atmosphere reflectance (TOA) images
-
-    Returns
-    ----------
-    checkboxes: list
-        list of ipywidgets.widgets.widget_bool.Checkbox objects associated with each image for user input
-    '''
-
-    # -----Set the font size and checkbox size using CSS styling
-    style = """
-            <style>
-            .my-checkbox input[type="checkbox"] {
-                transform: scale(2.5); /* Adjust the scale factor as needed */
-                margin-right: 20px; /* Adjust the spacing between checkbox and label as needed */
-                margin-left: 20px;
-            }
-            .my-checkbox label {
-                font-size: 24px; /* Adjust the font size as needed */
-            }
-            </style>
-            """
-
-    # -----Display instructions message
-    print('Scroll through each snowline image and check boxes below "bad" snowlines to remove from time series.')
-    print('When finished, proceed to next cell.')
-
-    # -----Loop through snowlines
-    checkboxes = [] # initalize list of heckboxes for user input
-    for i in np.arange(0,len(sl_est_df)):
-
-        print(' ')
-        print(' ')
-
-        # grab snowline coordinates
-        if len(sl_est_df.iloc[i]['snowlines_coords_X']) > 2:
-            sl_X = [float(x) for x in sl_est_df.iloc[i]['snowlines_coords_X'].replace('[','').replace(']','').split(', ')]
-            sl_Y = [float(y) for y in sl_est_df.iloc[i]['snowlines_coords_Y'].replace('[','').replace(']','').split(', ')]
-        # grab snowline date
-        date = sl_est_df.iloc[i]['datetime']
-        # grab snowline dataset
-        dataset = sl_est_df.iloc[i]['dataset']
-        print(date, dataset)
-
-        # determine snowline image file name
-        im_fn=None
-        if dataset=='Landsat':
-            im_fn = glob.glob(L_im_path + '*' + date.replace('-','')[0:8]+'.tif')
-        elif dataset=='PlanetScope':
-            im_fn = glob.glob(PS_im_path + date.replace('-','')[0:8]+'.tif')
-        elif dataset=='Sentinel-2_SR':
-            im_fn = glob.glob(S2_SR_im_path + date.replace('-','')[0:8] + '*.tif')
-        elif dataset=='Sentinel-2_TOA':
-            im_fn = glob.glob(S2_TOA_im_path + date.replace('-','')[0:8] + '*.tif')
-
-        if im_fn:
-            im_fn = im_fn[0]
-        else:
-            print('No image found in file')
-            continue
-        print(im_fn)
-
-        # load image
-        im_da = rxr.open_rasterio(im_fn)
-        im_ds = im_da.to_dataset('band')
-        band_names = list(dataset_dict[dataset]['refl_bands'].keys())
-        im_ds = im_ds.rename({i + 1: name for i, name in enumerate(band_names)})
-        im_ds = xr.where(im_ds!=dataset_dict[dataset]['no_data_value'],
-                         im_ds / dataset_dict[dataset]['image_scalar'], np.nan)
-        # plot
-        fig, ax = plt.subplots(1, 1, figsize=(6,6))
-        RGB_bands = dataset_dict[dataset]['RGB_bands']
-        ax.imshow(np.dstack([im_ds[RGB_bands[0]], im_ds[RGB_bands[1]], im_ds[RGB_bands[2]]]),
-                  extent=(np.min(im_ds.x.data)/1e3, np.max(im_ds.x.data)/1e3,
-                          np.min(im_ds.y.data)/1e3, np.max(im_ds.y.data)/1e3))
-        if len(sl_est_df.iloc[i]['snowlines_coords_X']) > 2:
-            ax.plot([x/1e3 for x in sl_X], [y/1e3 for y in sl_Y], '.m', markersize=2, label='snowline')
-            ax.legend(loc='best')
-        else:
-            print('No snowline coordinates detected')
-        ax.set_xlabel('Easting [km]')
-        ax.set_ylabel('Northing [km]')
-        ax.set_title(date)
-        plt.show()
-
-        # create and display checkbox
-        checkbox = widgets.Checkbox(value=False, description='Remove snowline', indent=False)
-        checkbox.add_class('my-checkbox')
-        display(HTML(style))
-        display(checkbox)
-
-        # add checkbox to list of checkboxes
-        checkboxes += [checkbox]
-
-    return checkboxes
-
-
-# --------------------------------------------------
-def fourier_series_symb(x, f, n=0):
-    """
-    Creates a symbolic fourier series of order 'n'.
-
-    Parameters
-    ----------
-    n: float
-        Order of the fourier series
-    x: numpy.array
-        Independent variable
-    f: float
-        Frequency of the fourier series
-
-    Returns
-    ----------
-    series: str
-        symbolic fourier series of order 'n'
-    """
-    # Make the parameter objects for all the terms
-    a0, *cos_a = parameters(','.join(['a{}'.format(i) for i in range(0, n + 1)]))
-    sin_b = parameters(','.join(['b{}'.format(i) for i in range(1, n + 1)]))
-    # Construct the series
-    series = a0 + sum(ai * cos(i * f * x) + bi * sin(i * f * x)
-                     for i, (ai, bi) in enumerate(zip(cos_a, sin_b), start=1))
-    return series
-
-
-# --------------------------------------------------
-def fourier_model(c, X):
-    '''
-    Generates a fourier series model using the given coefficients, evaluated at the input X values.
-
-    Parameters
-    ----------
-    c: numpy.array
-        vector containing the coefficients for the Fourier fit
-    x: numpy.array
-        x-values at which to evaluate the model
-
-    Returns
-    ----------
-    ymod: numpy.array
-        modeled y-values values at each x-value
-    '''
-
-    if len(c): # at least a1 and b1 coefficients exist
-        # grab a0 and w coefficients
-        a0 = c[0]
-        w = c[-1]
-        # list a and b coefficients in pairs, with a coeffs in one column, b coeffs in the second column
-        coeff_pairs = list(zip(*[iter(c[1:])]*2))
-        # separate a and b coefficients
-        a_coeffs = [y[0] for y in coeff_pairs]
-        b_coeffs = [y[1] for y in coeff_pairs]
-        # construct the series
-        series_a = np.zeros(len(X))
-        for i, x in enumerate(X): # loop through x values
-            series_a[i] = np.sum([y*np.cos((i+1)*x*w) for i, y in enumerate(a_coeffs)]) # sum the a terms
-        series_b = np.zeros(len(X))
-        for i, x in enumerate(X): # loop through x values
-            series_b[i] = np.sum([y*np.sin((i+1)*x*w) for i, y in enumerate(b_coeffs)]) # sum the a terms
-        ymod = [a0+a+b for a, b in list(zip(series_a, series_b))]
-    else: # only a0 coefficient exists
-        ymod = a0*np.ones(len(X))
-
-    return ymod
-
-
-# --------------------------------------------------
-def optimized_fourier_model(X, Y, nyears, plot_results):
-    '''
-    Generate a modeled fit to input data using Fourier series. First, identify the ideal number of terms for the Fourier model using 100 Monte Carlo simulations. Then, solve for the mean value for each coefficient using 500 Monte Carlo simulations.
-
-    Parameters
-    ----------
-    X: numpy.array
-        independent variable
-    Y: numpy.array
-        dependent variable
-    nyears: int
-        number of years (or estimated periods in your data) used to determine the range of terms to test
-    plot_results: bool
-        whether to plot results
-
-    Returns
-    ----------
-    Y_mod: numpy.array
-        modeled y values evaluated at each X-value
-    '''
-
-    # -----Identify the ideal number of terms for the Fourier model using Monte Carlo simulations
-    # set up variables and parameters
-    x, y = variables('x, y')
-    w, = parameters('w')
-    model_dict = {y: fourier_series_symb(x, f=w, n=5)}
-
-    nmc = 100 # number of Monte Carlo simulations
-    pTrain = 0.9 # percent of data to use as training
-    fourier_ns = [nyears-1, nyears, nyears+1]
-    print('Conducting 100 Monte Carlo simulations to determine the ideal number of model terms...')
-
-    # loop through possible number of terms
-    df_terms = pd.DataFrame(columns=['fit_minus1_err', 'fit_err', 'fit_plus1_err'])
-    for i in np.arange(0,nmc):
-
-        # split into training and testing data
-        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size=pTrain, shuffle=True)
-        # fit fourier curves to the training data with varying number of coeffients
-        fit_minus1 = Fit({y: fourier_series_symb(x, f=w, n=fourier_ns[0])},
-                    x=X_train, y=Y_train).execute()
-        fit = Fit({y: fourier_series_symb(x, f=w, n=fourier_ns[1])},
-                    x=X_train, y=Y_train).execute()
-        fit_plus1 = Fit({y: fourier_series_symb(x, f=w, n=fourier_ns[2])},
-                    x=X_train, y=Y_train).execute()
-        # fit models to testing data
-        Y_pred_minus1 = fit_minus1.model(x=X_test, **fit_minus1.params).y
-        Y_pred = fit.model(x=X_test, **fit.params).y
-        Y_pred_plus1 = fit_plus1.model(x=X_test, **fit_plus1.params).y
-        # calculate error, concatenate to df
-        fit_minus1_err = np.abs(Y_test - Y_pred_minus1)
-        fit_err = np.abs(Y_test - Y_pred)
-        fit_plus1_err = np.abs(Y_test - Y_pred_plus1)
-        result = pd.DataFrame({'fit_minus1_err': fit_minus1_err,
-                               'fit_err': fit_err,
-                               'fit_plus1_err': fit_plus1_err})
-        # add results to df
-        df_terms = pd.concat([df_terms, result])
-
-    df_terms = df_terms.reset_index(drop=True)
-
-    # plot results
-    if plot_results:
-        fig, ax = plt.subplots(1, 3, figsize=(12, 5))
-        ax[0].boxplot(fit_minus1_err);
-        ax[0].set_title(str(fourier_ns[0]) + ' terms, N=' + str(len(fit_minus1_err)));
-        ax[0].set_ylim(np.min([fit_minus1_err, fit_err, fit_plus1_err])-10, np.max([fit_minus1_err, fit_err, fit_plus1_err])+10)
-        ax[0].set_ylabel('Least absolute error')
-        ax[1].boxplot(fit_err);
-        ax[1].set_title(str(fourier_ns[1]) + ' terms, N=' + str(len(fit_err)));
-        ax[1].set_ylim(np.min([fit_minus1_err, fit_err, fit_plus1_err])-10, np.max([fit_minus1_err, fit_err, fit_plus1_err])+10)
-        ax[2].boxplot(fit_plus1_err);
-        ax[2].set_ylim(np.min([fit_minus1_err, fit_err, fit_plus1_err])-10, np.max([fit_minus1_err, fit_err, fit_plus1_err])+10)
-        ax[2].set_title(str(fourier_ns[2]) + ' terms, N=' + str(len(fit_plus1_err)));
-        plt.show()
-
-    # calculate mean error for each number of coefficients
-    fit_err_mean = [np.nanmean(df_terms['fit_minus1_err']), np.nanmean(df_terms['fit_err']), np.nanmean(df_terms['fit_plus1_err'])]
-    # identify best number of coefficients
-    Ibest = np.argmin(fit_err_mean)
-    fit_best = [fit_minus1, fit, fit_plus1][Ibest]
-    fourier_n = fourier_ns[Ibest]
-    print('Optimal # of model terms = ' + str(fourier_n))
-    print('Mean error = +/- ' + str(np.round(fit_err_mean[Ibest])) + ' m')
-
-    # -----Conduct Monte Carlo simulations to generate 500 Fourier models
-    nmc = 500 # number of monte carlo simulations
-    # initialize coefficients data frame
-    cols = [val[0] for val in fit_best.params.items()]
-    X_mod = np.linspace(X[0], X[-1], num=100) # points at which to evaluate the model
-    Y_mod = np.zeros((nmc, len(X_mod))) # array to hold modeled Y values
-    Y_mod_err = np.zeros(nmc) # array to hold error associated with each model
-    print('Conducting Monte Carlo simulations to generate 500 Fourier models...')
-    # loop through Monte Carlo simulations
-    for i in np.arange(0,nmc):
-
-        # split into training and testing data
-        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size=pTrain, shuffle=True)
-
-        # fit fourier model to training data
-        fit = Fit({y: fourier_series_symb(x, f=w, n=fourier_n)},
-                    x=X_train, y=Y_train).execute()
-
-#        print(str(i)+ ' '+ str(len(fit.params)))
-
-        # apply fourier model to testing data
-        Y_pred = fit.model(x=X_test, **fit.params).y
-
-        # calculate mean error
-        Y_mod_err[i] = np.sum(np.abs(Y_test - Y_pred)) / len(Y_test)
-
-        # apply the model to the full X data
-        c = [c[1] for c in fit.params.items()] # coefficient values
-        Y_mod[i,:] = fourier_model(c, X_mod)
-
-    # plot results
-    if plot_results:
-        Y_mod_iqr = iqr(Y_mod, axis=0)
-        Y_mod_median = np.nanmedian(Y_mod, axis=0)
-        Y_mod_P25 = Y_mod_median - Y_mod_iqr/2
-        Y_mod_P75 = Y_mod_median + Y_mod_iqr/2
-
-        fig, ax = plt.subplots(figsize=(10,6))
-        plt.rcParams.update({'font.size':14})
-        ax.fill_between(X_mod, Y_mod_P25, Y_mod_P75, facecolor='blue', alpha=0.5, label='model$_{IQR}$')
-        ax.plot(X_mod, np.median(Y_mod, axis=0), '.-b', linewidth=1, label='model$_{median}$')
-        ax.plot(X, Y, 'ok', markersize=5, label='data')
-        ax.set_ylabel('Snowline elevation [m]')
-        ax.set_xlabel('Days since first observation date')
-        ax.grid()
-        ax.legend(loc='best')
-        plt.show()
-
-    return X_mod, Y_mod, Y_mod_err

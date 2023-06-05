@@ -2,8 +2,8 @@
 # Functions used in the planetAPI_image_download.ipynb notebook
 # Modified from Planet Labs notebooks: https://github.com/planetlabs/notebooks/tree/master/jupyter-notebooks
 
-from planet.api import filters
-from planet import api
+from planet import OrdersClient, Session
+from planet import data_filter as filters
 import os
 from shapely import geometry as sgeom
 import shapely
@@ -22,7 +22,7 @@ from tqdm.auto import tqdm
 def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
                   item_type, asset_type):
     '''Compile input filters to create request for Planet API search'''
-    
+
     geometry_filter = {
       "type": "GeometryFilter",
       "field_name": "geometry",
@@ -45,7 +45,7 @@ def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
         "lte": max_cloud_cover
       }
     }
-    
+
 #    asset_filter = []
 #    for asset_type in asset_types:
 #        af = {
@@ -64,16 +64,16 @@ def build_QS_request(AOI_shape, max_cloud_cover, start_date, end_date,
         "asset_types": [asset_type],
         "filter": combined_filter
     }
-            
+
     return request
 
 def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset_type):
     '''Build Planet API request for image orders with image IDs'''
-    
+
     # define the clip and harmonize tools
     clip_tool = {"clip": {"aoi": AOI_box}}
     harmonize_tool = {"harmonize": {"target_sensor": "Sentinel-2"}}
-    
+
     # determine which product bundle to use
     if (item_type=="PSScene") & ("sr" in asset_type):
         product_bundle = "analytic_sr_udm2" # 4-band surface reflectance products with UDM2 mask
@@ -84,7 +84,7 @@ def build_request_itemIDs(AOI_box, clip_AOI, harmonize, im_ids, item_type, asset
     else:
         print("Error in product bundle selection, exiting...")
         return "N/A"
-    
+
     # create request object depending on settings
     if (clip_AOI==True) & (harmonize==True):
         request = {
@@ -140,21 +140,21 @@ def search_pl_api(request, limit):
     '''Search Planet API using request'''
     client = api.ClientV1(api_key=os.environ['PL_API_KEY'])
     result = client.quick_search(request)
-    
+
     # note that this returns a generator
     return result.items_iter(limit=limit)
-    
+
 def place_order(orders_url, search_request, auth):
     # set content type to json
     headers = {'content-type': 'application/json'}
-    
+
     response = requests.post(orders_url, data=json.dumps(search_request), auth=auth, headers=headers)
     print(response.json())
     order_id = response.json()['id']
     print(order_id)
     order_url = orders_url + '/' + order_id
     return order_url
-    
+
 def poll_for_success(order_url, auth, num_loops=1e10):
     count = 0
     while(count < num_loops):
@@ -167,12 +167,12 @@ def poll_for_success(order_url, auth, num_loops=1e10):
         if state in end_states:
             break
         time.sleep(10)
-        
+
 def download_results(results, out_folder, overwrite=False):
     results_urls = [r['location'] for r in results]
     results_names = [r['name'] for r in results]
     print('{} items to download'.format(len(results_urls)))
-    
+
     count = 0 # count for downloaded files
     for url, name in tqdm(list(zip(results_urls, results_names))):
         path = Path(os.path.join(out_folder,name))
@@ -182,7 +182,7 @@ def download_results(results, out_folder, overwrite=False):
             open(path, 'wb').write(r.content)
         else:
             print('{} already exists, skipping {}'.format(path, name))
-        
+
         count+=1
     print('Done!')
 
@@ -200,16 +200,16 @@ def _get_utm_zone(shape):
     centroid = shape.centroid
     lon = centroid.x
     lat = centroid.y
-    
+
     if lat > 84 or lat < -80:
         raise Exception('UTM Zones only valid within [-80, 84] latitude')
-    
+
     # this is adapted from
     # https://www.e-education.psu.edu/natureofgeoinfo/book/export/html/1696
     zone = int((lon + 180) / 6 + 1)
-    
+
     hemisphere = 'north' if lat > 0 else 'south'
-    
+
     return (zone, hemisphere)
 
 def _get_utm_projection(shape):
@@ -217,10 +217,10 @@ def _get_utm_projection(shape):
 #    proj_str = "+proj=utm +zone={zone}, +{hemi} +ellps=WGS84 +datum=WGS84 +units=m +no_defs".format(
 #        zone=zone, hemi=hemisphere)
     return pyproj.Proj(proj='utm', zone=zone, ellps='WGS84')
-    
+
 def get_overlap_shapes_utm(items, AOI_shape, epsg):
     '''Determine overlap between item footprint and AOI in UTM.'''
-   
+
     proj_fcn = partial(pyproj.transform)
     AOI_shape_utm = shapely.ops.transform(proj_fcn, AOI_shape)
 
@@ -237,19 +237,19 @@ def get_coverage_dimensions(aoi_shape_utm):
     minx, miny, maxx, maxy = aoi_shape_utm.bounds
     width = maxx - minx
     height = maxy - miny
-    
+
     min_cell_size = 9 # in meters, approx 3x ground sampling distance
     min_number_of_cells = 3
     max_number_of_cells = 3000
-    
-    
+
+
     min_dim = min_cell_size * min_number_of_cells
     if height < min_dim:
         raise Exception('AOI height too small, should be {}m.'.format(min_dim))
 
     if width < min_dim:
         raise Exception('AOI width too small, should be {}m.'.format(min_dim))
-    
+
     def _dim(length):
         return min(int(length/min_cell_size), max_number_of_cells)
 
@@ -257,7 +257,7 @@ def get_coverage_dimensions(aoi_shape_utm):
 
 def get_overlap_shapes_utm(items, aoi_shape):
     '''Determine overlap between item footprint and AOI in UTM.'''
-    
+
     proj_fcn = get_utm_projection_fcn(aoi_shape)
     aoi_shape_utm = shapely.ops.transform(proj_fcn, aoi_shape)
 
@@ -270,15 +270,15 @@ def get_overlap_shapes_utm(items, aoi_shape):
         yield _calculate_overlap(i)
 
 #def filter_by_coverage(overlaps, dimensions, bounds):
-    
+
 
 def calculate_coverage(overlaps, dimensions, bounds):
-    
+
     # get dimensions of coverage raster
     mminx, mminy, mmaxx, mmaxy = bounds
 
     y_count, x_count = dimensions
-    
+
     # determine pixel width and height for transform
     width = (mmaxx - mminx) / x_count
     height = (mminy - mmaxy) / y_count # should be negative
@@ -292,7 +292,7 @@ def calculate_coverage(overlaps, dimensions, bounds):
     # f = y-coordinate of the of the upper-left corner of the upper-left pixel
     # ref: http://www.perrygeo.com/python-affine-transforms.html
     transform = rio.Affine(width, 0, mminx, 0, height, mmaxy)
-    
+
     coverage = np.zeros(dimensions, dtype=np.uint16)
     for overlap in overlaps:
         if not overlap.is_empty:
@@ -304,17 +304,17 @@ def calculate_coverage(overlaps, dimensions, bounds):
                     default_value=1,
                     out_shape=dimensions,
                     transform=transform)
-            
+
             # add overlap raster to coverage raster
             coverage += overlap_raster
     return coverage
-    
+
 def plot_coverage(coverage):
     fig, ax = plt.subplots()
     cax = ax.imshow(coverage, interpolation='nearest', cmap=cm.viridis)
     ax.set_title('Coverage\n(median: {})'.format(int(np.median(coverage))))
     ax.axis('off')
-    
+
     ticks_min = coverage.min()
     ticks_max = coverage.max()
     cbar = fig.colorbar(cax,ticks=[ticks_min, ticks_max])
