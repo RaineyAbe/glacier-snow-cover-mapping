@@ -1,1 +1,0 @@
-{"Dataset": "Sentinel-2_SR", "Overall accuracy": 0.9847528916929548, "Kappa score": 0.9688377458862186, "Confusion matrix": {"TP": "797", "TN": "1076", "FP": "6", "FN": "23"}, "N": 1902}
