@@ -1,3 +1,0 @@
-Dataset,Overall accuracy,Kappa score,Confusion matrix,N
-Sentinel-2_TOA,0.9150292087095061,0.8294233412824049,"[[774  14]
- [146 949]]",1883

@@ -1,3 +1,0 @@
-Dataset,Overall accuracy,Kappa score,Confusion matrix,N
-Landsat,0.9479695431472082,0.89225908109415,"[[600  21]
- [ 61 894]]",1576

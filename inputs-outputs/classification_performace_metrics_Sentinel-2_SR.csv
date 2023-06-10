@@ -1,3 +1,0 @@
-Dataset,Overall accuracy,Kappa score,Confusion matrix,N
-Sentinel-2_SR,0.9847528916929548,0.9688377458862186,"[[ 797    6]
- [  23 1076]]",1902
