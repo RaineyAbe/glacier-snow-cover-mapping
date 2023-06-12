@@ -10,7 +10,7 @@
 . ~/.bashrc
 
 # activate conda environment
-conda activate planet-snow
+conda activate snow-cover-mapping
 
 # run your code
-python /home/raberle/scratch/snow_cover_mapping/snow-cover-mapping/scripts/PlanetScope_snow_classification_pipeline.py
+python /home/raberle/scratch/snow-cover-mapping/scripts/snow_classification_pipeline.py

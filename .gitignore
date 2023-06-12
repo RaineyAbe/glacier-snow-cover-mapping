@@ -8,3 +8,6 @@ Inputs-outputs/*.zip
 
 # PyCharm files
 .idea*
+
+# Scripts for running on cluster
+scripts/example_slurm_*.bash
