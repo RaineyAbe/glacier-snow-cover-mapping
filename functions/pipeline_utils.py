@@ -11,7 +11,7 @@ import ee
 import geedim as gd
 from shapely.geometry import MultiPolygon, Polygon, LineString, Point, shape
 import os
-import wxee as wx
+# import wxee as wx
 import xarray as xr
 import numpy as np
 import rasterio as rio
@@ -24,7 +24,6 @@ import matplotlib
 import subprocess
 import glob
 from tqdm.auto import tqdm
-import re
 import datetime
 
 
@@ -412,7 +411,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi, date_start, date_end, mont
                     im_fn = dataset + '_' + im_fn[0:10].replace('_', '') + '_MOSAIC.tif'
                 else:
                     im_fn = dataset + '_' + im_fn[0:8] + '.tif'
-            # download if doesn't exist in directory
+            # download if image doesn't exist in directory
             if not os.path.exists(out_path + im_fn):
                 im_gd.download(out_path + im_fn, region=region, scale=dataset_dict[dataset]['resolution_m'],
                                crs='EPSG:' + epsg_utm, bands=im_gd.refl_bands)
@@ -604,8 +603,8 @@ def planetscope_mosaic_images_by_date(im_path, im_fns, out_path, aoi):
                                                       invert=False)
                     b_aoi = b[mask == 0]  # grab blue band values within AOI
                     # set no-data values to NaN
-                    b_aoi[b_AOI == -9999] = np.nan
-                    b_aoi[b_AOI == 0] = np.nan
+                    b_aoi[b_aoi == -9999] = np.nan
+                    b_aoi[b_aoi == 0] = np.nan
                     if len(b_aoi[~np.isnan(b_aoi)]) > 0:
                         file_paths.append(im_path_adj + im_fn)  # add the path to the file
 
@@ -923,6 +922,8 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
     # -----Crop image to the AOI
     if crop_to_aoi:
         im_aoi = im_xr.rio.clip(aoi.geometry, im_xr.rio.crs).squeeze(dim='time', drop=True)
+    else:
+        im_aoi = im_xr.squeeze(dim='time', drop=True)
 
     # -----Prepare image for classification
     # find indices of real numbers (no NaNs allowed in classification)
@@ -937,15 +938,19 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
     df = df.reset_index(drop=True)
 
     # -----Classify image
-    if len(df) > 1:
-        array_classified = clf.predict(df[feature_cols])
-    else:
-        print("No real values found to classify, skipping...")
+    try:
+        if len(df) > 1:
+            array_classified = clf.predict(df[feature_cols])
+        else:
+            print("No real values found to classify, skipping...")
+            return 'N/A'
+        # reshape from flat array to original shape
+        im_classified = np.zeros(im_aoi.to_array().data[0].shape)
+        im_classified[:] = np.nan
+        im_classified[ireal] = array_classified
+    except:
+        print("Error occured in classification, skipping...")
         return 'N/A'
-    # reshape from flat array to original shape
-    im_classified = np.zeros(im_aoi.to_array().data[0].shape)
-    im_classified[:] = np.nan
-    im_classified[ireal] = array_classified
 
     # -----Mask the DEM using the AOI
     dem_aoi = dem.rio.clip(aoi.geometry, dem.rio.crs)
@@ -1222,7 +1227,7 @@ def delineate_image_snowline(im_xr, im_classified, site_name, aoi, dataset_dict,
 
     # -----Save snowline df to file
     # reduce memory storage of dataframe
-    snowline_df = reduce_memory_usage(snowline_df, verbose=True)
+    snowline_df = reduce_memory_usage(snowline_df, verbose=False)
     # save using user-specified file extension
     if 'pkl' in snowline_fn:
         snowline_df.to_pickle(out_path + snowline_fn)
@@ -1396,7 +1401,7 @@ def query_gee_for_modis_sr(aoi, date_start, date_end, month_start, month_end, cl
     ndsi_bands = ds_dict['NDSI']
     m_xr['NDSI'] = ((m_xr[ndsi_bands[0]] - m_xr[ndsi_bands[1]]) / (m_xr[ndsi_bands[0]] + m_xr[ndsi_bands[1]]))
 
-    return M_xr
+    return m_xr
 
 
 # --------------------------------------------------
