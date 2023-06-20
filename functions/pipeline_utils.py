@@ -253,7 +253,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi, date_start, date_end, mont
     Returns
     __________
     im_ds_list: list
-        list of xarray.Datasets, filtered using AOI coverage
+        list of xarray.Datasets over the AOI
     """
 
     # -----Reformat AOI for image filtering
@@ -263,6 +263,8 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi, date_start, date_end, mont
     aoi_wgs_centroid = [aoi_wgs.geometry[0].centroid.xy[0][0],
                         aoi_wgs.geometry[0].centroid.xy[1][0]]
     epsg_utm = convert_wgs_to_utm(aoi_wgs_centroid[0], aoi_wgs_centroid[1])
+    # reproject AOI to UTM
+    aoi_utm = aoi_wgs.to_crs('EPSG:' + epsg_utm)
 
     # -----Prepare AOI for querying geedim (AOI bounding box)
     region = {'type': 'Polygon',
@@ -303,21 +305,18 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi, date_start, date_end, mont
         return 'N/A'
 
     # -----Determine whether images must be downloaded (if image sizes exceed GEE limit)
-    im_download = True
-
-    ### NOTE: wxee has a bug related to new xarray release (xarray.open_rasterio no longer functional) - must download all images
+    im_download = False # set to no downloads as default
     # Calculate width and height of AOI bounding box [m]
-    # aoi_utm_bb_width = aoi_utm.geometry[0].bounds[2] - aoi_utm.geometry[0].bounds[0]
-    # aoi_utm_bb_height = aoi_utm.geometry[0].bounds[3] - aoi_utm.geometry[0].bounds[1]
-    # # Check if bounding box is larger than GEE image outputs
-    # if dataset=='Landsat':
-    #     if ((aoi_utm_bb_width / 30 * 8)*(aoi_utm_bb_height / 30 * 8)) > 1e9:
-    #         im_download = True
-    #         print('Landsat mages must be downloaded for full spatial resolution')
-    # if (dataset=='Sentinel-2_SR') or (dataset=='Sentinel-2_TOA'):
-    #     if ((aoi_utm_bb_width / 10 * 9)*(aoi_utm_bb_height / 10 * 9)) > 1e9:
-    #         im_download = True
-    #         print('Sentinel-2_SR mages must be downloaded for full spatial resolution')
+    aoi_utm_bb_width = aoi_utm.geometry[0].bounds[2] - aoi_utm.geometry[0].bounds[0]
+    aoi_utm_bb_height = aoi_utm.geometry[0].bounds[3] - aoi_utm.geometry[0].bounds[1]
+    # Check if number of pixels in each image exceeds GEE limit
+    res = dataset_dict[dataset]['resolution_m']
+    num_bands = len(dataset_dict['Landsat']['refl_bands'])
+    if ((aoi_utm_bb_width / res * num_bands)**2) > 1e9:
+        im_download = True
+        print(dataset + ' images must be downloaded for full spatial resolution')
+    else:
+        print('No image downloads necessary, '+dataset+' images over the AOI are within the GEE limit.')
 
     # -----Filter images by month then  mosaic images captured in the same hour
     def filter_mosaic_images(im_col_gd):
@@ -436,22 +435,17 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi, date_start, date_end, mont
             # add xarray.Dataset to list
             im_ds_list.append(im_ds)
 
-    # else:
-    #     # loop through image IDs
-    #     for im_ID in tqdm(im_IDs_filt):
-    #         # create gd.MaskedImage from image ID
-    #         im_gd = gd.MaskedImage.from_id(im_col_id+'/'+im_ID, mask=mask_clouds, region=region)
-    #         # create ee.Image and select bands
-    #         im_ee = im_gd.ee_image#.select(L.refl_bands)
-    #         # convert to xarray.Dataset
-    #         im_ds = im_ee.wx.to_xarray()
-    #         # remove no data values
-    #         im_ds = xr.where(im_ds < 0, np.nan, im_ds)
-    #         # reproject to optimal UTM zone
-    #         im_ds = im_ds.rio.reproject('EPSG:'+str(epsg_utm))
-    #         im_ds.rio.write_crs('EPSG:'+str(epsg_utm), inplace=True)
-    #         # add xarray.Dataset to list
-    #         im_ds_list.append(im_ds)
+    else:
+        # loop through images
+        for im_gd in tqdm(im_gd_list):
+            # create gd.MaskedImage from image ID
+            im_gd = gd.MaskedImage.from_id(im_gd.id, mask=mask_clouds, region=region)
+            # create ee.Image and select bands
+            im_ee = im_gd.ee_image.select(im_gd.refl_bands)
+            # convert to xarray.Dataset
+            im_ds = im_ee.wx.to_xarray(scale=res, region=region, crs='EPSG:'+epsg_utm)
+            # add xarray.Dataset to list
+            im_ds_list.append(im_ds)
 
     return im_ds_list
 
