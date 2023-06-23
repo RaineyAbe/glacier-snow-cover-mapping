@@ -70,7 +70,11 @@ base_path = args.base_path
 AOI_path = args.AOI_path
 AOI_fn = args.AOI_fn
 DEM_path = args.DEM_path
+if DEM_path == "None":
+    DEM_path = None
 DEM_fn = args.DEM_fn
+if DEM_fn == "None":
+    DEM_fn = None
 out_path = args.out_path
 figures_out_path = args.figures_out_path
 date_start = args.date_start
@@ -121,16 +125,14 @@ AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
 # grab the optimal UTM zone EPSG code
 epsg_UTM = f.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
 print('Optimal UTM CRS = EPSG:' + str(epsg_UTM))
+# reproject AOI to the optimal UTM zone
+AOI_UTM = AOI.to_crs('EPSG:' + epsg_UTM)
 
-# -----Load DEM as xarray.DataSet
+# -----Load DEM as Xarray DataSet
 if DEM_fn is None:
-    # set DEM path if not defined
-    DEM_path = AOI_path + '../DEMs/'
     # query GEE for DEM
-    DEM, AOI_UTM = f.query_gee_for_dem(AOI, base_path, site_name, DEM_path)
+    DEM = f.query_gee_for_dem(AOI_UTM, base_path, site_name, DEM_path)
 else:
-    # reproject AOI to UTM
-    AOI_UTM = AOI.to_crs('EPSG:' + str(epsg_UTM))
     # load DEM as xarray DataSet
     DEM = xr.open_dataset(DEM_path + DEM_fn)
     DEM = DEM.rename({'band_data': 'elevation'})
@@ -140,7 +142,6 @@ else:
 # remove unnecessary data (possible extra bands from ArcticDEM or other DEM)
 if len(np.shape(DEM.elevation.data)) > 2:
     DEM['elevation'] = DEM.elevation[0]
-
 
 # ------------------------- #
 # --- 1. Sentinel-2 TOA --- #
@@ -152,7 +153,7 @@ if 1 in steps_to_run:
 
     # -----Query GEE for imagery (and download to S2_TOA_im_path if necessary)
     dataset = 'Sentinel-2_TOA'
-    im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI, date_start, date_end, month_start,
+    im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start,
                                       month_end, cloud_cover_max, mask_clouds, S2_TOA_im_path)
 
     # -----Load trained classifier and feature columns
@@ -224,7 +225,6 @@ if 1 in steps_to_run:
             print(' ')
     print(' ')
 
-
 # ------------------------ #
 # --- 2. Sentinel-2 SR --- #
 # ------------------------ #
@@ -236,7 +236,7 @@ if 2 in steps_to_run:
 
     # -----Query GEE for imagery and download to S2_SR_im_path if necessary
     dataset = 'Sentinel-2_SR'
-    im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI, date_start, date_end, month_start,
+    im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start,
                                       month_end, cloud_cover_max, mask_clouds, S2_SR_im_path)
 
     # -----Load trained classifier and feature columns
@@ -306,7 +306,6 @@ if 2 in steps_to_run:
                 print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             print(' ')
     print(' ')
-
 
 # ------------------------- #
 # --- 3. Landsat 8/9 SR --- #
@@ -384,7 +383,6 @@ if 3 in steps_to_run:
                 print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             print(' ')
     print(' ')
-
 
 # ------------------------- #
 # --- 4. PlanetScope SR --- #
