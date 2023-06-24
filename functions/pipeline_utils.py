@@ -25,6 +25,7 @@ import subprocess
 import glob
 from tqdm.auto import tqdm
 import datetime
+from rioxarray.merge import merge_arrays
 
 
 # --------------------------------------------------
@@ -180,19 +181,13 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
             dem_fn = nasadem_fn  # file name for saving
             res = 30  # spatial resolution [m]
 
-        # -----Determine whether DEM must be downloaded
-        # Calculate width and height of AOI bounding box [m]
-        aoi_bb_width = aoi_utm.geometry[0].bounds[2] - aoi_utm.geometry[0].bounds[0]
-        aoi_bb_height = aoi_utm.geometry[0].bounds[3] - aoi_utm.geometry[0].bounds[1]
-        if (aoi_bb_width / res) * (aoi_bb_height / res) >= 1e9:
-            dem_download = True
-            # print('DEM must be downloaded for full spatial resolution')
-        else:
-            dem_download = False
-            # print('DEM size is within GEE limit, no download necessary')
-
         # -----Download DEM and open as xarray.Dataset
-        if dem_download:
+        # Try converting DEM to xarray.Dataset using wxee
+        try:
+            dem_ds = dem.ee_image.select('elevation').wx.to_xarray(scale=res, region=region, crs='EPSG:4326')
+            dem_ds = dem_ds.rio.to_crs('EPSG:' + epsg_utm)
+        # Otherwise, download using geedim and open as xarray.Dataset
+        except:
             print('Downloading DEM to ' + out_path)
             # create out_path if it doesn't exist
             if not os.path.exists(out_path):
@@ -204,13 +199,9 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
             # reproject to UTM
             dem_ds = dem_ds.rio.reproject('EPSG:' + str(epsg_utm))
             dem_ds = dem_ds.rename({'band_data': 'elevation'})
-            # remove unnecessary data
-            if len(np.shape(dem_ds.elevation.data)) > 2:
-                dem_ds['elevation'] = dem_ds.elevation[0]
-        else:
-            dem_ee_im = dem.ee_image.clip(region)
-            dem_ds = dem_ee_im.wx.to_xarray(scale=res, region=region, crs='EPSG:4326')
-            dem_ds = dem_ds.rio.reproject('EPSG:' + str(epsg_utm))
+        # Remove unnecessary dimensions in elevation band
+        if len(np.shape(dem_ds.elevation.data)) > 2:
+            dem_ds['elevation'] = dem_ds.elevation[0]
 
     return dem_ds
 
@@ -247,7 +238,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
 
     Returns
     __________
-    im_ds_list: list
+    im_xr_list: list
         list of xarray.Datasets over the AOI
     """
 
@@ -295,125 +286,98 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
             "'dataset' variable not recognized or accepted. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. Exiting...")
         return 'N/A'
 
+    # -----Create list of image IDs to download, include those that will be composited
+    # define function to create list of IDs to be mosaicked
+    def image_mosaic_ids(im_col_gd):
+        # create lists of image properties
+        properties = im_col_gd.properties
+        ims = dict(properties).keys()
+        im_ids = [properties[im]['system:id'] for im in ims]
+        # return if no images found
+        if len(im_ids) < 1:
+            return 'N/A'
+        # remove image datetimes and IDs outside the specified month range
+        im_dts = np.array(
+            [datetime.datetime.utcfromtimestamp(properties[im]['system:time_start'] / 1000) for im in ims])
+        i = [int(ii) for ii in np.arange(0, len(im_dts)) if
+             (im_dts[ii].month >= month_start) and (im_dts[ii].month <= month_end)]
+        im_dts, im_ids = [im_dts[ii] for ii in i], [im_ids[ii] for ii in i]
+        # return if no images found after filtering by month range
+        if len(im_dts) < 1:
+            return 'N/A'
+        # grab all unique hours
+        hours = np.array(im_dts, dtype='datetime64[h]')
+        unique_hours = sorted(set(hours))
+        # create list of IDs for each unique hour
+        im_ids_list, im_dts_list = [], []
+        for unique_hour in unique_hours:
+            i = list(np.ravel(np.argwhere(hours == unique_hour)))
+            im_ids_list_hour = [im_ids[ii] for ii in i]
+            im_ids_list.append(im_ids_list_hour)
+            im_dts_list_hour = [im_dts[ii] for ii in i]
+            im_dts_list.append(im_dts_list_hour)
+
+        return im_ids_list, im_dts_list
+
+    # extract list of IDs to be mosaicked
+    if dataset == 'Landsat':  # must run for Landsat 8 and 9 separately
+        im_ids_list_8, im_dts_list_8 = image_mosaic_ids(im_col_gd_8)
+        im_ids_list_9, im_dts_list_9 = image_mosaic_ids(im_col_gd_9)
+        im_ids_list = sorted(im_ids_list_8.append(im_ids_list_9))
+        im_dts_list = sorted(im_dts_list_8.append(im_dts_list_9))
+    else:
+        im_ids_list, im_dts_list = image_mosaic_ids(im_col_gd)
+
     # -----Determine whether images must be downloaded (if image sizes exceed GEE limit)
-    im_download = True  # NEED TO FIX WXEE METHOD - set to download as default
+    im_download = False  # set to no downloads as default
     # Calculate width and height of AOI bounding box [m]
     aoi_utm_bb_width = aoi_utm.geometry[0].bounds[2] - aoi_utm.geometry[0].bounds[0]
     aoi_utm_bb_height = aoi_utm.geometry[0].bounds[3] - aoi_utm.geometry[0].bounds[1]
     # Check if number of pixels in each image exceeds GEE limit
     res = dataset_dict[dataset]['resolution_m']
-    num_bands = len(dataset_dict['Landsat']['refl_bands'])
-    if ((aoi_utm_bb_width / res * num_bands) ** 2) > 1e9:
+    num_bands = len(dataset_dict[dataset]['refl_bands'])
+    if ((aoi_utm_bb_width / res * num_bands) * (aoi_utm_bb_height / res * num_bands)) > 1e8:
         im_download = True
         print(dataset + ' images must be downloaded for full spatial resolution')
-    # else:
-    #     print('No image downloads necessary, ' + dataset + ' images over the AOI are within the GEE limit.')
+    else:
+        print('No image downloads necessary, ' + dataset + ' images over the AOI are within the GEE limit.')
 
-    # -----Convert list of gd.MaskedImages to list of xarray.Datasets
-    im_ds_list = []  # initialize list of xarray.Datasets
+    # -----Create list of xarray.Datasets from list of image IDs
+    im_xr_list = []  # initialize list of xarray.Datasets
+    # loop through image IDs
+    for i in tqdm(range(0, len(im_ids_list))):
 
-    # If image downloads are necessary, use geedim...
-    if im_download:
+        # subset image IDs and image datetimes
+        im_ids, im_dts = im_ids_list[i], im_dts_list[i]
 
-        # Make directory for outputs (out_path) if it doesn't exist
-        if not os.path.exists(out_path):
-            os.mkdir(out_path)
-            print('Made directory for image downloads: ' + out_path)
+        # if images must be downloaded, use geedim
+        if im_download:
 
-        # Filter images by month then, mosaic images captured in the same hour
-        def filter_mosaic_images_gd(im_col_gd):
-            # Create lists of image properties
-            properties = im_col_gd.properties
-            ims = dict(properties).keys()
-            im_ids = np.array([properties[im]['system:id'] for im in ims])
-            # return if no images found
-            if len(im_ids) < 1:
-                return 'N/A'
-            # Remove image datetimes and IDs outside the specified month range
-            im_dts = np.array(
-                [datetime.datetime.utcfromtimestamp(properties[im]['system:time_start'] / 1000) for im in ims])
-            i = [ii for ii in np.arange(0, len(im_dts)) if
-                 (im_dts[ii].month >= month_start) and (im_dts[ii].month <= month_end)]
-            im_dts, im_ids = im_dts[i], im_ids[i]
-            # return if no images found after filtering by month range
-            if len(im_dts) < 1:
-                return 'N/A'
-            # Grab all unique hours
-            hours = np.array(im_dts, dtype='datetime64[h]')
-            unique_hours = sorted(set(hours))
-            # Loop through unique_hours
-            im_gd_list = []  # initialize list of gd.MaskedImages
-            for hour in unique_hours:
-                # find IDs of image captured within the hour
-                im_ids_hour = im_ids[hours == hour]
-                # if more than one image captured within the hour, create composite
-                if len(im_ids_hour) > 1:
-                    # create list of MaskedImages from IDs
-                    im_list_hour = [gd.MaskedImage.from_id(im_id) for im_id in im_ids_hour]
-                    # combine into new MaskedCollection
-                    im_collection = gd.MaskedCollection.from_list(im_list_hour)
-                    # create image composite
-                    im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
-                                                           mask=mask_clouds, region=region)
-                    # append to image list
-                    im_gd_list.append(im_composite)
-                # if only one image captured within the hour, add the image to list
-                else:
-                    # create single MaskedImage from ID
-                    im = gd.MaskedImage.from_id(im_ids_hour[0], mask=mask_clouds, region=region)
-                    # append to image list
-                    im_gd_list.append(im)
-            return im_gd_list
-
-        # Mosaic images captured within the same hour
-        # # Landsat 8 and 9 must be mosaicked separately
-        print('Mosaicking images captured within the same hour...')
-        if dataset == 'Landsat':
-            im_gd_list_8 = filter_mosaic_images_gd(im_col_gd_8)
-            im_gd_list_9 = filter_mosaic_images_gd(im_col_gd_9)
-            if (im_gd_list_8 == 'N/A') and (im_gd_list_9 == 'N/A'):
-                im_gd_list = 'N/A'
-            elif im_gd_list_9 == 'N/A':
-                im_gd_list = im_gd_list_8
-            elif im_gd_list_8 == 'N/A':
-                im_gd_list = im_gd_list_9
+            # make directory for outputs (out_path) if it doesn't exist
+            if not os.path.exists(out_path):
+                os.mkdir(out_path)
+                print('Made directory for image downloads: ' + out_path)
+            # define filename
+            if len(im_ids) > 1:
+                im_fn = dataset + '_' + str(im_dts[0]).replace('-', '')[0:8] + '_MOSAIC.tif'
             else:
-                im_gd_list = list(im_gd_list_8) + list(im_gd_list_9)
-        else:
-            im_gd_list = filter_mosaic_images_gd(im_col_gd)
-        # Return if no images were found
-        if im_gd_list == 'N/A':
-            print('No images found, exiting...')
-            return 'N/A'
-
-        # Download images to file, read in as xarray.Datasets
-        os.chdir(out_path)
-        print('Downloading images to ' + out_path)
-        # loop through image IDs
-        for im_gd in tqdm(im_gd_list):
-            # define image filename for saving
-            im_fn = im_gd.id.split('/')[-1] + '.tif'
-            # adjust file name according to dataset
-            if dataset == 'Landsat':
-                if 'MOSAIC' in im_fn:
-                    im_fn = 'Landsat_' + im_fn[0:10].replace('_', '') + '_MOSAIC.tif'
-                else:
-                    im_fn = 'Landsat_' + im_fn[-12:]
-            elif 'Sentinel-2' in dataset:
-                if 'MOSAIC' in im_fn:
-                    im_fn = dataset + '_' + im_fn[0:10].replace('_', '') + '_MOSAIC.tif'
-                else:
-                    im_fn = dataset + '_' + im_fn[0:8] + '.tif'
-            # download if image doesn't exist in directory
+                im_fn = dataset + '_' + str(im_dts).replace('-', '')[0:8] + '.tif'
+            # check file does not already exist in directory, download
             if not os.path.exists(out_path + im_fn):
-                im_gd.download(out_path + im_fn, region=region, scale=dataset_dict[dataset]['resolution_m'],
-                               crs='EPSG:' + epsg_utm, bands=im_gd.refl_bands)
+                # create list of MaskedImages from IDs
+                im_gd_list = [gd.MaskedImage.from_id(im_id) for im_id in im_ids]
+                # combine into new MaskedCollection
+                im_collection = gd.MaskedCollection.from_list(im_gd_list)
+                # create image composite
+                im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
+                                                       mask=mask_clouds, region=region)
+                # download to file
+                im_composite.download(out_path + im_fn, region=region, scale=dataset_dict[dataset]['resolution_m'],
+                                      crs='EPSG:' + epsg_utm, bands=im_composite.refl_bands)
             else:
-                print(im_fn + ' already exists in directory, skipping...')
-            # read in xarray.DataArray
-            im_da = rxr.open_rasterio(im_fn)
-            # reproject to optimal UTM zone (if necessary)
-            im_da = im_da.rio.reproject('EPSG:' + str(epsg_utm))
+                print('Image already exists in directory, loading...')
+            # load image from file
+            im_da = rxr.open_rasterio(out_path + im_fn)
             # convert to xarray.DataSet
             im_ds = im_da.to_dataset('band')
             band_names = list(dataset_dict[dataset]['refl_bands'].keys())
@@ -427,28 +391,43 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
             # set CRS
             im_ds.rio.write_crs('EPSG:' + str(im_da.rio.crs.to_epsg()), inplace=True)
             # add xarray.Dataset to list
-            im_ds_list.append(im_ds)
+            im_xr_list.append(im_ds)
 
-    # If no image downloads necessary, use wxee to convert ee.Images to xarray.Datasets
-    else:
-        # define function to mosaic images captured within same hour
-        # FUNCTION HERE
+        else:  # if no image downloads necessary, use wxee
 
-        # loop through images
-        for im_gd in tqdm(im_gd_list):
-            # create gd.MaskedImage from image ID
-            im_gd = gd.MaskedImage.from_id(im_gd.id, mask=mask_clouds, region=region)
-            # create ee.Image and select bands
-            im_ee = im_gd.ee_image.select(im_gd.refl_bands)
-            # convert to xarray.Dataset
-            im_ds = im_ee.wx.to_xarray(scale=res, region=region, crs='EPSG:' + epsg_utm)
-            # account for image scalar
-            im_ds = im_ds / dataset_dict[dataset]['image_scalar']
-            im_ds = im_ds.rio.write_crs('EPSG:' + epsg_utm)  # reset CRS in case it was overwritten
-            # add xarray.Dataset to list
-            im_ds_list.append(im_ds)
+            # if more than one ID, composite images
+            if len(im_dts) > 1:
+                # create list of MaskedImages from IDs
+                ims_gd = [gd.MaskedImage.from_id(im_id, mask=mask_clouds, region=region) for im_id in im_ids]
+                # convert to list of ee.Images
+                ims_ee = [ee.Image(im_gd.ee_image).select(im_gd.refl_bands) for im_gd in ims_gd]
+                # convert to xarray.Datasets
+                ims_xr = [im_ee.wx.to_xarray(scale=res, region=region, crs='EPSG:' + epsg_utm) for im_ee in ims_ee]
+                # composite images
+                ims_xr_composite = xr.merge(ims_xr)
+                # account for image scalar
+                ims_xr_composite = xr.where(ims_xr_composite != dataset_dict[dataset]['no_data_value'],
+                                            ims_xr_composite / dataset_dict[dataset]['image_scalar'], np.nan)
+                # set CRS
+                ims_xr_composite.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
+                # append to list of xarray.Datasets
+                im_xr_list.append(ims_xr_composite)
+            else:
+                # create MaskedImage from ID
+                im_gd = gd.MaskedImage.from_id(im_ids, mask=mask_clouds, region=region)
+                # convert to ee.Image
+                im_ee = ee.Image(im_gd.ee_image).select(im_gd.refl_bands)
+                # convert to xarray.Datasets
+                im_xr = im_ee.wx.to_xarray(scale=res, region=region, crs='EPSG:' + epsg_utm)
+                # account for image scalar
+                im_xr = xr.where(im_xr != dataset_dict[dataset]['no_data_value'],
+                                 im_xr / dataset_dict[dataset]['image_scalar'], np.nan)
+                # set CRS
+                im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
+                # append to list of xarray.Datasets
+                im_xr_list.append(im_xr)
 
-    return im_ds_list
+    return im_xr_list
 
 
 # --------------------------------------------------
