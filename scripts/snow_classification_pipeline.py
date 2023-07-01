@@ -65,7 +65,10 @@ cloud_cover_max = 70
 # If the cloud masks are consistently masking large regions or your study site, I suggest setting mask_clouds = False
 mask_clouds = True
 
-# -----Determine image clipping & plotting settings
+# -----Determine image download, clipping & plotting settings
+# Note: if im_download = False, but images over the AOI exceed GEE limit,
+# images must be downloaded regardless.
+im_download = True  # = True to download all satellite images by default
 plot_results = True  # = True to plot figures of results for each image where applicable
 skip_clipped = False  # = True to skip images where bands appear "clipped", i.e. max(blue) < 0.8
 crop_to_AOI = True  # = True to crop images to AOI before calculating SCA
@@ -88,6 +91,9 @@ import geedim as gd
 import json
 from tqdm.auto import tqdm
 from joblib import load
+import warnings
+
+warnings.simplefilter("ignore")
 
 # -----Set paths for output files
 S2_TOA_im_path = out_path + 'Sentinel-2_TOA/'
@@ -146,7 +152,7 @@ if 1 in steps_to_run:
     # -----Query GEE for imagery (and download to S2_TOA_im_path if necessary)
     dataset = 'Sentinel-2_TOA'
     im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start,
-                                      month_end, cloud_cover_max, mask_clouds, S2_TOA_im_path)
+                                      month_end, cloud_cover_max, mask_clouds, S2_TOA_im_path, im_download)
 
     # -----Load trained classifier and feature columns
     clf_fn = base_path + 'inputs-outputs/Sentinel-2_TOA_classifier_all_sites.joblib'
@@ -158,12 +164,13 @@ if 1 in steps_to_run:
     if type(im_list) == str:  # check that images were found
         print('No images found to classify, quiting...')
     else:
-
+        print('Classifying images...')
         for i in tqdm(range(0, len(im_list))):
 
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
+            print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -229,7 +236,7 @@ if 2 in steps_to_run:
     # -----Query GEE for imagery and download to S2_SR_im_path if necessary
     dataset = 'Sentinel-2_SR'
     im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start,
-                                      month_end, cloud_cover_max, mask_clouds, S2_SR_im_path)
+                                      month_end, cloud_cover_max, mask_clouds, S2_SR_im_path, im_download)
 
     # -----Load trained classifier and feature columns
     clf_fn = base_path + 'inputs-outputs/Sentinel-2_SR_classifier_all_sites.joblib'
@@ -241,12 +248,13 @@ if 2 in steps_to_run:
     if type(im_list) == str:  # check that images were found
         print('No images found to classify, quiting...')
     else:
-
+        print('Classifying images...')
         for i in tqdm(range(0, len(im_list))):
 
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
+            print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -311,7 +319,7 @@ if 3 in steps_to_run:
     # -----Query GEE for imagery (and download to L_im_path if necessary)
     dataset = 'Landsat'
     im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start, month_end,
-                                      cloud_cover_max, mask_clouds, L_im_path)
+                                      cloud_cover_max, mask_clouds, L_im_path, im_download)
 
     # -----Load trained classifier and feature columns
     clf_fn = base_path + 'inputs-outputs/Landsat_classifier_all_sites.joblib'
@@ -323,12 +331,13 @@ if 3 in steps_to_run:
     if type(im_list) == str:  # check that images were found
         print('No images found to classify, quitting...')
     else:
-
+        print('Classifying images...')
         for i in tqdm(range(0, len(im_list))):
 
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
+            print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar

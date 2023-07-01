@@ -59,6 +59,10 @@ parser.add_argument('-cloud_cover_max', default=None, type=int, help='Max. cloud
                                                                      'e.g. 50 = 50% maximum cloud coverage')
 parser.add_argument('-mask_clouds', default=None, type=bool, help='Whether to mask clouds using the respective cloud '
                                                                   'cover masking product of each dataset')
+parser.add_argument('-im_download', default=False, type=bool, help='Whether to download intermediary images. '
+                                                                   'If im_download=False, but images over the AOI '
+                                                                   'exceed the GEE limit, images must be '
+                                                                   'downloaded regardless.')
 parser.add_argument('-steps_to_run', default=None, nargs="+", type=int,
                     help='List of steps to be run, e.g. [1, 2, 3]. '
                          '1=Sentinel-2_TOA, 2=Sentinel-2_SR, 3=Landsat, 4=PlanetScope')
@@ -83,6 +87,7 @@ month_start = args.month_start
 month_end = args.month_end
 cloud_cover_max = args.cloud_cover_max
 mask_clouds = args.mask_clouds
+im_download = args.im_download
 steps_to_run = args.steps_to_run
 
 # -----Determine image clipping & plotting settings
@@ -154,7 +159,7 @@ if 1 in steps_to_run:
     # -----Query GEE for imagery (and download to S2_TOA_im_path if necessary)
     dataset = 'Sentinel-2_TOA'
     im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start,
-                                      month_end, cloud_cover_max, mask_clouds, S2_TOA_im_path)
+                                      month_end, cloud_cover_max, mask_clouds, S2_TOA_im_path, im_download)
 
     # -----Load trained classifier and feature columns
     clf_fn = base_path + 'inputs-outputs/Sentinel-2_TOA_classifier_all_sites.joblib'
@@ -166,12 +171,13 @@ if 1 in steps_to_run:
     if type(im_list) == str:  # check that images were found
         print('No images found to classify, quiting...')
     else:
-
+        print('Classifying images...')
         for i in tqdm(range(0, len(im_list))):
 
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
+            print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -237,7 +243,7 @@ if 2 in steps_to_run:
     # -----Query GEE for imagery and download to S2_SR_im_path if necessary
     dataset = 'Sentinel-2_SR'
     im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start,
-                                      month_end, cloud_cover_max, mask_clouds, S2_SR_im_path)
+                                      month_end, cloud_cover_max, mask_clouds, S2_SR_im_path, im_download)
 
     # -----Load trained classifier and feature columns
     clf_fn = base_path + 'inputs-outputs/Sentinel-2_SR_classifier_all_sites.joblib'
@@ -249,12 +255,13 @@ if 2 in steps_to_run:
     if type(im_list) == str:  # check that images were found
         print('No images found to classify, quiting...')
     else:
-
+        print('Classifying images...')
         for i in tqdm(range(0, len(im_list))):
 
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
+            print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -319,7 +326,7 @@ if 3 in steps_to_run:
     # -----Query GEE for imagery (and download to L_im_path if necessary)
     dataset = 'Landsat'
     im_list = f.query_gee_for_imagery(dataset_dict, dataset, AOI_UTM, date_start, date_end, month_start, month_end,
-                                      cloud_cover_max, mask_clouds, L_im_path)
+                                      cloud_cover_max, mask_clouds, L_im_path, im_download)
 
     # -----Load trained classifier and feature columns
     clf_fn = base_path + 'inputs-outputs/Landsat_classifier_all_sites.joblib'
@@ -331,12 +338,13 @@ if 3 in steps_to_run:
     if type(im_list) == str:  # check that images were found
         print('No images found to classify, quitting...')
     else:
-
+        print('Classifying images...')
         for i in tqdm(range(0, len(im_list))):
 
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
+            print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar

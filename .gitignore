@@ -2,6 +2,7 @@
 *.asv
 *.ipynb_checkpoints*
 *__pycache__*
+*.DS_Store
 
 # .zip folders of study area shapefiles
 Inputs-outputs/*.zip
