@@ -2,6 +2,14 @@
 *.asv
 *.ipynb_checkpoints*
 *__pycache__*
+*.DS_Store
 
 # .zip folders of study area shapefiles
 Inputs-outputs/*.zip
+
+# PyCharm files
+.idea*
+
+# Scripts for running on cluster
+scripts/example_slurm_*.bash
+scripts/slurm_*.bash
