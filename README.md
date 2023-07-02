@@ -21,7 +21,7 @@ _Basic image processing workflow:_
 4. (Optional) __Digital elevation model (DEM)__. If you do not specify a DEM, the code will automatically use the ArcticDEM Mosaic where there is coverage and the NASADEM otherwise. 
 
 ## Installation
-Please see the [installation instructions](https://github.com/RaineyAbe/snow-cover-mapping/docs/installation_instructions.md). 
+Please see the [installation instructions](https://github.com/RaineyAbe/snow-cover-mapping/blob/main/docs/installation_instructions.md). 
 
 ## Basic Workflow
 ### 1. (Optional) Download PlanetScope imagery
