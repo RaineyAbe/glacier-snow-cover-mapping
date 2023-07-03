@@ -264,28 +264,35 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
     if dataset == 'Landsat':
         # Landsat 8
         im_col_gd_8 = gd.MaskedCollection.from_name('LANDSAT/LC08/C02/T1_L2').search(start_date=date_start,
-                                                                                     end_date=date_end, region=region,
+                                                                                     end_date=date_end,
+                                                                                     region=region,
                                                                                      cloudless_portion=100 - cloud_cover_max,
+                                                                                     mask=mask_clouds,
                                                                                      fill_portion=70)
         # Landsat 9
         im_col_gd_9 = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
-                                                                                     end_date=date_end, region=region,
+                                                                                     end_date=date_end,
+                                                                                     region=region,
                                                                                      cloudless_portion=100 - cloud_cover_max,
+                                                                                     mask=mask_clouds,
                                                                                      fill_portion=70)
     elif dataset == 'Sentinel-2_TOA':
         im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
-                                                                                     end_date=date_end, region=region,
+                                                                                     end_date=date_end,
+                                                                                     region=region,
                                                                                      cloudless_portion=100 - cloud_cover_max,
+                                                                                     mask=mask_clouds,
                                                                                      fill_portion=70)
     elif dataset == 'Sentinel-2_SR':
         im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
                                                                                         end_date=date_end,
                                                                                         region=region,
                                                                                         cloudless_portion=100 - cloud_cover_max,
+                                                                                        mask=mask_clouds,
                                                                                         fill_portion=70)
     else:
         print(
-            "'dataset' variable not recognized or accepted. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. Exiting...")
+            "'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. Exiting...")
         return 'N/A'
 
     # -----Create list of image IDs to download, include those that will be composited
