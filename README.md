@@ -32,3 +32,5 @@ Coming soon...
 
 ## Funding and Acknowledgements
 We would like to thank members of the [CryoGARS Glaciology](https://github.com/CryoGARS-Glaciology) lab at Boise State University and the [USGS Benchmark Glacier program](https://www.usgs.gov/programs/climate-research-and-development-program/science/usgs-benchmark-glacier-project) staff for their support and input. This work was funded by BAA-CRREL award W913E520C0017 and NASA EPSCoR award 80NSSC20M0222 and utilized data from [Planet Labs, Inc.](https://www.planet.com/) which was made available through the [NASA Commercial Smallsat Data Acquisition (CSDA) Program](https://www.earthdata.nasa.gov/esds/csda). 
+
+Several open packages made the integration of this Python-based workflow with Google Earth Engine possible. Thank you to the developers of [geemap](https://geemap.org/), [geedim](https://geedim.readthedocs.io/en/latest/index.html), and [wxee](https://wxee.readthedocs.io/en/latest/index.html). 
