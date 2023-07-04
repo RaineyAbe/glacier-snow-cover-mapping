@@ -301,7 +301,8 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
         # create lists of image properties
         try:
             properties = im_col_gd.properties
-        except:
+        except Exception as e:
+            print(e)
             return 'N/A', 'N/A'
         ims = dict(properties).keys()
         im_ids = [properties[im]['system:id'] for im in ims]
@@ -349,7 +350,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
         im_ids_list, im_dts_list = image_mosaic_ids(im_col_gd)
     # check if any images were found after filtering by month and determine mosaic IDs
     if type(im_ids_list) is str:
-        print('No images found for this date range, exiting...')
+        print('No images found or error in one or more image IDs, exiting...')
         return 'N/A'
 
     # -----Determine whether images must be downloaded (if image sizes exceed GEE limit)
