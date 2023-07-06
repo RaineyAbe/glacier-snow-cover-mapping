@@ -31,7 +31,7 @@ import numpy as np
 import glob
 import geopandas as gpd
 import sys
-import geedim as gd
+import ee
 import json
 from tqdm.auto import tqdm
 from joblib import load
@@ -66,6 +66,8 @@ parser.add_argument('-im_download', default=False, type=bool, help='Whether to d
 parser.add_argument('-steps_to_run', default=None, nargs="+", type=int,
                     help='List of steps to be run, e.g. [1, 2, 3]. '
                          '1=Sentinel-2_TOA, 2=Sentinel-2_SR, 3=Landsat, 4=PlanetScope')
+parser.add_argument('-verbose', default=False, type=bool,
+                    help='Whether to print details for each image at each processing step.')
 args = parser.parse_args()
 
 # -----Set user arguments as variables
@@ -89,6 +91,7 @@ cloud_cover_max = args.cloud_cover_max
 mask_clouds = args.mask_clouds
 im_download = args.im_download
 steps_to_run = args.steps_to_run
+verbose = args.verbose
 
 # -----Determine image clipping & plotting settings
 plot_results = True  # = True to plot figures of results for each image where applicable
@@ -119,7 +122,7 @@ import pipeline_utils as f
 dataset_dict = json.load(open(base_path + 'inputs-outputs/datasets_characteristics.json'))
 
 # -----Authenticate and initialize GEE
-gd.Initialize()
+ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
 
 # -----Load AOI as gpd.GeoDataFrame
 AOI = gpd.read_file(AOI_path + AOI_fn)
@@ -129,7 +132,6 @@ AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
                     AOI_WGS.geometry[0].centroid.xy[1][0]]
 # grab the optimal UTM zone EPSG code
 epsg_UTM = f.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
-print('Optimal UTM CRS = EPSG:' + str(epsg_UTM))
 # reproject AOI to the optimal UTM zone
 AOI_UTM = AOI.to_crs('EPSG:' + epsg_UTM)
 
@@ -169,7 +171,7 @@ if 1 in steps_to_run:
 
     # -----Loop through images
     if type(im_list) == str:  # check that images were found
-        print('No images found to classify, quiting...')
+        print('No images found to classify, quitting...')
     else:
         print('Classifying images...')
         for i in tqdm(range(0, len(im_list))):
@@ -199,7 +201,8 @@ if 1 in steps_to_run:
             im_classified_fn = im_date.replace('-', '').replace(':',
                                                                 '') + '_' + site_name + '_' + dataset + '_classified.nc'
             if os.path.exists(im_classified_path + im_classified_fn):
-                print('Classified image already exists in file, continuing...')
+                if verbose:
+                    print('Classified image already exists in file, continuing...')
                 im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
                 # remove no data values
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
@@ -214,8 +217,9 @@ if 1 in steps_to_run:
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
             if os.path.exists(snowlines_path + snowline_fn):
-                print('Snowline already exists in file, continuing...')
-                print(' ')
+                if verbose:
+                    print('Snowline already exists in file, continuing...')
+                    print(' ')
                 continue  # no need to load snowline if it already exists
             else:
                 plot_results = True
@@ -227,8 +231,10 @@ if 1 in steps_to_run:
                                                          dataset,
                                                          im_date, snowline_fn, snowlines_path, figures_out_path,
                                                          plot_results)
-                print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
-            print(' ')
+                if verbose:
+                    print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
+            if verbose:
+                print(' ')
     print(' ')
 
 # ------------------------ #
@@ -283,7 +289,8 @@ if 2 in steps_to_run:
             im_classified_fn = im_date.replace('-', '').replace(':',
                                                                 '') + '_' + site_name + '_' + dataset + '_classified.nc'
             if os.path.exists(im_classified_path + im_classified_fn):
-                print('Classified image already exists in file, continuing...')
+                if verbose:
+                    print('Classified image already exists in file, continuing...')
                 im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
                 # remove no data values
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
@@ -298,7 +305,8 @@ if 2 in steps_to_run:
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
             if os.path.exists(snowlines_path + snowline_fn):
-                print('Snowline already exists in file, continuing...')
+                if verbose:
+                    print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
                 plot_results = True
@@ -310,8 +318,10 @@ if 2 in steps_to_run:
                                                          dataset,
                                                          im_date, snowline_fn, snowlines_path, figures_out_path,
                                                          plot_results)
-                print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
-            print(' ')
+                if verbose:
+                    print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
+            if verbose:
+                print(' ')
     print(' ')
 
 # ------------------------- #
@@ -361,7 +371,8 @@ if 3 in steps_to_run:
             im_classified_fn = im_date.replace('-', '').replace(':',
                                                                 '') + '_' + site_name + '_' + dataset + '_classified.nc'
             if os.path.exists(im_classified_path + im_classified_fn):
-                print('Classified image already exists in file, continuing...')
+                if verbose:
+                    print('Classified image already exists in file, continuing...')
                 im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
                 # remove no data values
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
@@ -376,7 +387,8 @@ if 3 in steps_to_run:
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
             if os.path.exists(snowlines_path + snowline_fn):
-                print('Snowline already exists in file, continuing...')
+                if verbose:
+                    print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
                 plot_results = True
@@ -388,8 +400,10 @@ if 3 in steps_to_run:
                                                          dataset,
                                                          im_date, snowline_fn, snowlines_path, figures_out_path,
                                                          plot_results)
-                print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
-            print(' ')
+                if verbose:
+                    print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
+            if verbose:
+                print(' ')
     print(' ')
 
 # ------------------------- #
@@ -446,7 +460,8 @@ if 4 in steps_to_run:
         im_date = im_mosaic_fn[0:4] + '-' + im_mosaic_fn[4:6] + '-' + im_mosaic_fn[6:8] + 'T' + im_mosaic_fn[
                                                                                                 9:11] + ':00:00'
         im_dt = np.datetime64(im_date)
-        print(im_date)
+        if verbose:
+            print(im_date)
 
         # -----Adjust radiometry
         im_adj, im_adj_method = f.planetscope_adjust_image_radiometry(im_da, im_dt, polygons_top, polygons_bottom,
@@ -458,7 +473,8 @@ if 4 in steps_to_run:
         im_classified_fn = im_date.replace('-', '').replace(':',
                                                             '') + '_' + site_name + '_' + dataset + '_classified.nc'
         if os.path.exists(im_classified_path + im_classified_fn):
-            print('Classified image already exists in file, loading...')
+            if verbose:
+                print('Classified image already exists in file, loading...')
             im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
             # remove no data values
             im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
@@ -477,13 +493,16 @@ if 4 in steps_to_run:
         # check if snowline already exists in file
         snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
         if os.path.exists(snowlines_path + snowline_fn):
-            print('Snowline already exists in file, skipping...')
+            if verbose:
+                print('Snowline already exists in file, skipping...')
         else:
             snowline_df = f.delineate_image_snowline(im_adj, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
                                                      im_date, snowline_fn, snowlines_path, figures_out_path,
                                                      plot_results)
-            print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
-        print(' ')
+            if verbose:
+                print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
+        if verbose:
+            print(' ')
     print(' ')
 
 print('Done!')

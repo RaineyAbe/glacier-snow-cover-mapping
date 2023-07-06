@@ -302,7 +302,8 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
         try:
             properties = im_col_gd.properties
         except Exception as e:
-            print(e)
+            exc_id = str(e).split('ID=')[1].split(')')[0]
+            print('Error accessing image ID: ' + exc_id + '. Exiting...')
             return 'N/A', 'N/A'
         ims = dict(properties).keys()
         im_ids = [properties[im]['system:id'] for im in ims]
@@ -871,7 +872,8 @@ def planetscope_adjust_image_radiometry(im_xr, im_dt, polygon_top, polygon_botto
 
 
 # --------------------------------------------------
-def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict, dataset, im_classified_fn, out_path):
+def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict, dataset, im_classified_fn, out_path,
+                   verbose=False):
     """
     Function to classify image collection using a pre-trained classifier
 
@@ -899,6 +901,8 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
         file name of classified image to be saved
     out_path: str
         path in directory where classified images will be saved
+    verbose: bool
+        whether to print specifics while classifying each image
 
     Returns
     ----------
@@ -941,14 +945,16 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
         if len(df) > 1:
             array_classified = clf.predict(df[feature_cols])
         else:
-            print("No real values found to classify, skipping...")
+            if verbose:
+                print("No real values found to classify, skipping...")
             return 'N/A'
         # reshape from flat array to original shape
         im_classified = np.zeros(im_aoi.to_array().data[0].shape)
         im_classified[:] = np.nan
         im_classified[ireal] = array_classified
     except:
-        print("Error occured in classification, skipping...")
+        if verbose:
+            print("Error occurred in classification, skipping...")
         return 'N/A'
 
     # -----Mask the DEM using the AOI
@@ -988,7 +994,8 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
         # remove time dimension
         # im_classified_xr_adj_int = im_classified_xr_adj_int.drop_dims('time')
         im_classified_xr_int.rio.to_raster(out_path + im_classified_fn)
-    print('Classified image saved to file: ' + out_path + im_classified_fn)
+    if verbose:
+        print('Classified image saved to file: ' + out_path + im_classified_fn)
 
     return im_classified_xr
 
