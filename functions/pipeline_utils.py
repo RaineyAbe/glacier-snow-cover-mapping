@@ -25,9 +25,7 @@ import subprocess
 import glob
 from tqdm.auto import tqdm
 import datetime
-from rioxarray.merge import merge_arrays
-import ipywidgets as widgets
-from IPython.display import display, HTML
+from sklearn.exceptions import NotFittedError
 
 
 # --------------------------------------------------
@@ -904,7 +902,7 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
     out_path: str
         path in directory where classified images will be saved
     verbose: bool
-        whether to print specifics while classifying each image
+        whether to print details while classifying each image
 
     Returns
     ----------
@@ -931,32 +929,25 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
         im_aoi = im_xr.isel(time=0)
 
     # -----Prepare image for classification
-    # find indices of real numbers (no NaNs allowed in classification)
-    ix = [np.where((np.isfinite(im_aoi[band].data) & ~np.isnan(im_aoi[band].data)), True, False) for band in bands]
-    ireal = np.full(np.shape(im_aoi[bands[0]].data), True)
-    for ixx in ix:
-        ireal = ireal & ixx
-    # create df of image band values
-    df = pd.DataFrame(columns=feature_cols)
-    for col in feature_cols:
-        df[col] = np.ravel(im_aoi[col].data[ireal])
-    df = df.reset_index(drop=True)
+    df = pd.DataFrame({col: np.ravel(im_aoi[col].data) for col in feature_cols})
+    ireal = np.all(np.isfinite(df[feature_cols].values), axis=1)
+    if np.count_nonzero(ireal) == 0:
+        if verbose:
+            print("No real values found to classify, skipping...")
+        return 'N/A'
 
     # -----Classify image
     try:
-        if len(df) > 1:
-            array_classified = clf.predict(df[feature_cols])
-        else:
-            if verbose:
-                print("No real values found to classify, skipping...")
-            return 'N/A'
-        # reshape from flat array to original shape
-        im_classified = np.zeros(im_aoi.to_array().data[0].shape)
-        im_classified[:] = np.nan
+        array_classified = clf.predict(df.loc[ireal, feature_cols])
+        im_classified = np.full(im_aoi.isel(band=0).shape, np.nan)
         im_classified[ireal] = array_classified
-    except:
+    except NotFittedError:
         if verbose:
-            print("Error occurred in classification, skipping...")
+            print("Classifier is not fitted, skipping...")
+        return 'N/A'
+    except Exception as e:
+        if verbose:
+            print("Error occurred in classification:", str(e))
         return 'N/A'
 
     # -----Mask the DEM using the AOI
@@ -985,16 +976,12 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
                                                       'Classes': '1 = Snow, 2 = Shadowed snow, 4 = Ice, '
                                                                  '5 = Rock, 6 = Water'})
     # replace NaNs with -9999, convert data types to int
-    im_classified_xr_int = xr.where(np.isnan(im_classified_xr), -9999, im_classified_xr)
-    im_classified_xr_int.classified.data = im_classified_xr_int.classified.data.astype(int)
-    im_classified_xr_int.elevation.data = im_classified_xr_int.elevation.data.astype(int)
+    im_classified_xr_int = im_classified_xr.fillna(-9999).astype(int)
 
     # -----Save to file
     if '.nc' in im_classified_fn:
         im_classified_xr_int.to_netcdf(out_path + im_classified_fn)
     elif '.tif' in im_classified_fn:
-        # remove time dimension
-        # im_classified_xr_adj_int = im_classified_xr_adj_int.drop_dims('time')
         im_classified_xr_int.rio.to_raster(out_path + im_classified_fn)
     if verbose:
         print('Classified image saved to file: ' + out_path + im_classified_fn)
@@ -1004,7 +991,7 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
 
 # --------------------------------------------------
 def delineate_image_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, dataset, im_date, snowline_fn,
-                             out_path, figures_out_path, plot_results):
+                             out_path, figures_out_path, plot_results, verbose=False):
     """
     Delineate snowline(s) in classified images. Snowlines will likely not be detected in images with nearly all or no snow.
 
@@ -1032,6 +1019,8 @@ def delineate_image_snowline(im_xr, im_classified, site_name, aoi, dataset_dict,
         path in directory for figures
     plot_results: bool
         whether to plot RGB image, classified image, and resulting snowline and save figure to file
+    verbose: bool
+        whether to print details during the process
 
     Returns
     ----------
@@ -1240,10 +1229,12 @@ def delineate_image_snowline(im_xr, im_classified, site_name, aoi, dataset_dict,
     # save using user-specified file extension
     if 'pkl' in snowline_fn:
         snowline_df.to_pickle(out_path + snowline_fn)
-        print('Snowline saved to file: ' + out_path + snowline_fn)
+        if verbose:
+            print('Snowline saved to file: ' + out_path + snowline_fn)
     elif 'csv' in snowline_fn:
         snowline_df.to_csv(out_path + snowline_fn, index=False)
-        print('Snowline saved to file: ' + out_path + snowline_fn)
+        if verbose:
+            print('Snowline saved to file: ' + out_path + snowline_fn)
     else:
         print('Please specify snowline_fn with extension .pkl or .csv. Exiting...')
         return 'N/A'
@@ -1338,7 +1329,8 @@ def delineate_image_snowline(im_xr, im_classified, site_name, aoi, dataset_dict,
         # save figure
         fig_fn = figures_out_path + title + '.png'
         fig.savefig(fig_fn, dpi=300, facecolor='white', edgecolor='none')
-        print('Figure saved to file:' + fig_fn)
+        if verbose:
+            print('Figure saved to file:' + fig_fn)
 
     return snowline_df
 
@@ -1471,116 +1463,3 @@ def reduce_memory_usage(df, verbose=True):
             )
         )
     return df
-
-
-def manual_snowline_filter_plot(sl_est_df, dataset_dict, L_im_path, PS_im_path, S2_SR_im_path, S2_TOA_im_path):
-    """
-    Loop through full snowlines dataframe, plot associated image and snowline, display option to remove snowlines.
-
-    Parameters
-    ----------
-    sl_est_df: pandas.DataFrame
-        full, compiled dataframe of snowline CSV files
-    dataset_dict: dict
-        dictionary of parameters for each dataset
-    L_im_path: str
-        path in directory to raw Landsat images
-    PS_im_path: str
-        path in directory to PlanetScope image mosaics
-    S2_SR_im_path: str
-        path in directory to raw Sentnel-2 Surface Reflectance (SR) images
-    S2_TOA_im_path: str
-        path in directory to raw Sentinel-2 Top of Atmosphere reflectance (TOA) images
-
-    Returns
-    ----------
-    checkboxes: list
-        list of ipywidgets.widgets.widget_bool.Checkbox objects associated with each image for user input
-    """
-
-    # -----Set the font size and checkbox size using CSS styling
-    style = """
-            <style>
-            .my-checkbox input[type="checkbox"] {
-                transform: scale(2.5); /* Adjust the scale factor as needed */
-                margin-right: 20px; /* Adjust the spacing between checkbox and label as needed */
-                margin-left: 20px;
-            }
-            .my-checkbox label {
-                font-size: 24px; /* Adjust the font size as needed */
-            }
-            </style>
-            """
-
-    # -----Display instructions message
-    print('Scroll through each snowline image and check boxes below "bad" snowlines to remove from time series.')
-    print('When finished, proceed to next cell.')
-
-    # -----Loop through snowlines
-    checkboxes = []  # initialize list of checkboxes for user input
-    for i in np.arange(0, len(sl_est_df)):
-
-        print(' ')
-        print(' ')
-
-        # grab snowline coordinates
-        if len(sl_est_df.iloc[i]['snowlines_coords_X']) > 2:
-            sl_X = [float(x) for x in sl_est_df.iloc[i]['snowlines_coords_X'].replace('[','').replace(']','').split(', ')]
-            sl_Y = [float(y) for y in sl_est_df.iloc[i]['snowlines_coords_Y'].replace('[','').replace(']','').split(', ')]
-        # grab snowline date
-        date = sl_est_df.iloc[i]['datetime']
-        # grab snowline dataset
-        dataset = sl_est_df.iloc[i]['dataset']
-        print(date, dataset)
-
-        # determine snowline image file name
-        im_fn = None
-        if dataset=='Landsat':
-            im_fn = glob.glob(L_im_path + '*' + date.replace('-','')[0:8]+'.tif')
-        elif dataset=='PlanetScope':
-            im_fn = glob.glob(PS_im_path + date.replace('-','')[0:8]+'.tif')
-        elif dataset=='Sentinel-2_SR':
-            im_fn = glob.glob(S2_SR_im_path + date.replace('-','')[0:8] + '*.tif')
-        elif dataset=='Sentinel-2_TOA':
-            im_fn = glob.glob(S2_TOA_im_path + date.replace('-','')[0:8] + '*.tif')
-
-        if im_fn:
-            im_fn = im_fn[0]
-        else:
-            print('No image found in file')
-            continue
-        print(im_fn)
-
-        # load image
-        im_da = rxr.open_rasterio(im_fn)
-        im_ds = im_da.to_dataset('band')
-        band_names = list(dataset_dict[dataset]['refl_bands'].keys())
-        im_ds = im_ds.rename({i + 1: name for i, name in enumerate(band_names)})
-        im_ds = xr.where(im_ds!=dataset_dict[dataset]['no_data_value'],
-                         im_ds / dataset_dict[dataset]['image_scalar'], np.nan)
-        # plot
-        fig, ax = plt.subplots(1, 1, figsize=(6,6))
-        RGB_bands = dataset_dict[dataset]['RGB_bands']
-        ax.imshow(np.dstack([im_ds[RGB_bands[0]], im_ds[RGB_bands[1]], im_ds[RGB_bands[2]]]),
-                  extent=(np.min(im_ds.x.data)/1e3, np.max(im_ds.x.data)/1e3,
-                          np.min(im_ds.y.data)/1e3, np.max(im_ds.y.data)/1e3))
-        if len(sl_est_df.iloc[i]['snowlines_coords_X']) > 2:
-            ax.plot([x/1e3 for x in sl_X], [y/1e3 for y in sl_Y], '.m', markersize=2, label='snowline')
-            ax.legend(loc='best')
-        else:
-            print('No snowline coordinates detected')
-        ax.set_xlabel('Easting [km]')
-        ax.set_ylabel('Northing [km]')
-        ax.set_title(date)
-        plt.show()
-
-        # create and display checkbox
-        checkbox = widgets.Checkbox(value=False, description='Remove snowline', indent=False)
-        checkbox.add_class('my-checkbox')
-        display(HTML(style))
-        display(checkbox)
-
-        # add checkbox to list of checkboxes
-        checkboxes += [checkbox]
-
-    return checkboxes

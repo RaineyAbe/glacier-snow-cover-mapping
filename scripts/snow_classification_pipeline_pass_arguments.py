@@ -228,9 +228,8 @@ if 1 in steps_to_run:
                     os.mkdir(figures_out_path)
                     print('Created directory for output figures: ' + figures_out_path)
                 snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset,
-                                                         im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                         plot_results)
+                                                         dataset, im_date, snowline_fn, snowlines_path,
+                                                         figures_out_path, plot_results, verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -315,9 +314,8 @@ if 2 in steps_to_run:
                     os.mkdir(figures_out_path)
                     print('Created directory for output figures: ' + figures_out_path)
                 snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset,
-                                                         im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                         plot_results)
+                                                         dataset,im_date, snowline_fn, snowlines_path, figures_out_path,
+                                                         plot_results, verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
