@@ -16,7 +16,7 @@ import xarray as xr
 import numpy as np
 import rasterio as rio
 import rioxarray as rxr
-from scipy.ndimage import binary_fill_holes
+from scipy.ndimage import binary_fill_holes, binary_dilation
 from skimage.measure import find_contours
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
@@ -291,8 +291,8 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
                                                                                         mask=mask_clouds,
                                                                                         fill_portion=70)
     else:
-        print(
-            "'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. Exiting...")
+        print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
+              "Exiting...")
         return 'N/A'
 
     # -----Create list of image IDs to download, include those that will be composited
@@ -987,6 +987,319 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
         print('Classified image saved to file: ' + out_path + im_classified_fn)
 
     return im_classified_xr
+
+
+# --------------------------------------------------
+def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, dataset, im_date, snowline_fn,
+                       out_path, figures_out_path, plot_results, verbose=False):
+    """
+    Delineate the seasonal snowline in classified images. Snowlines will likely not be detected in images with nearly all or no snow.
+
+    Parameters
+    ----------
+    im_xr: xarray.Dataset
+        input image used for plotting
+    im_classified: xarray.Dataset
+        classified image used to delineate snowlines
+    site_name: str
+        name of study site used for output file names
+    aoi:  geopandas.geodataframe.GeoDataFrame
+        area of interest used to crop classified images
+    dataset_dict: dict
+        dictionary of dataset-specific parameters
+    dataset: str
+        name of dataset ('Landsat', 'Sentinel2', 'PlanetScope')
+    im_date: str
+        image capture datetime ('YYYYMMDDTHHmmss')
+    snowline_fn: str
+        file name of snowline to be saved in out_path
+    out_path: str
+        path in directory for output snowlines
+    figures_out_path: str
+        path in directory for figures
+    plot_results: bool
+        whether to plot RGB image, classified image, and resulting snowline and save figure to file
+    verbose: bool
+        whether to print details during the process
+
+    Returns
+    ----------
+    snowline_gdf: geopandas.GeoDataFrame
+        resulting study site name, image datetime, snowline coordinates, snowline elevations, and median snowline elevation
+    """
+
+    # -----Make directory for snowlines (if it does not already exist)
+    global elevation_threshold_mask
+    if not os.path.exists(out_path):
+        os.mkdir(out_path)
+        print("Made directory for snowlines:" + out_path)
+
+    # -----Make directory for figures (if it does not already exist)
+    if (not os.path.exists(figures_out_path)) & plot_results:
+        os.mkdir(figures_out_path)
+        print('Made directory for output figures: ' + figures_out_path)
+
+    # -----Subset dataset_dict to dataset
+    ds_dict = dataset_dict[dataset]
+
+    # -----Remove time dimension
+    im_xr = im_xr.isel(time=0)
+    im_classified = im_classified.isel(time=0)
+
+    # -----Create no data mask
+    no_data_mask = xr.where(np.isnan(im_classified), 1, 0).classified.data
+    # dilate by two image pixels
+    dilated_mask = binary_dilation(no_data_mask, iterations=5)
+    no_data_mask = np.logical_not(dilated_mask)
+    # add no_data_mask variable classified image
+    im_classified = im_classified.assign(no_data_mask=(["y", "x"], no_data_mask))
+
+    # -----Determine snow covered elevations
+    all_elev = np.ravel(im_classified.elevation.data)
+    all_elev = all_elev[~np.isnan(all_elev)]  # remove NaNs
+    snow_est_elev = np.ravel(im_classified.where((im_classified.classified <= 2))
+                             .where(im_classified.classified != -9999).elevation.data)
+    snow_est_elev = snow_est_elev[~np.isnan(snow_est_elev)]  # remove NaNs
+
+    # -----Create elevation histograms
+    # determine bins to use in histograms
+    elev_min = np.fix(np.nanmin(np.ravel(im_classified.elevation.data)) / 10) * 10
+    elev_max = np.round(np.nanmax(np.ravel(im_classified.elevation.data)) / 10) * 10
+    bin_edges = np.linspace(elev_min, elev_max, num=int((elev_max - elev_min) / 10 + 1))
+    bin_centers = (bin_edges[1:] + bin_edges[0:-1]) / 2
+    # calculate elevation histograms
+    hist_elev = np.histogram(all_elev, bins=bin_edges)[0]
+    hist_snow_est_elev = np.histogram(snow_est_elev, bins=bin_edges)[0]
+    hist_snow_est_elev_norm = hist_snow_est_elev / hist_elev
+
+    # -----Make all pixels at elevation bins with >75% snow coverage = snow
+    # determine elevation with > 75% snow coverage
+    if np.any(hist_snow_est_elev_norm > 0.75):
+        elev_75_snow = bin_centers[np.argmax(hist_snow_est_elev_norm > 0.75)]
+        # make a copy of im_classified for adjusting
+        im_classified_adj = im_classified.copy()
+        # Fill gaps in elevation using linear interpolation along the spatial dimensions
+        im_classified_adj['elevation'] = im_classified['elevation'].interpolate_na(dim='x', method='linear')
+        # set all pixels above the elev_75_snow to snow (1)
+        im_classified_adj['classified'] = xr.where(im_classified_adj['elevation'] > elev_75_snow, 1,
+                                                   im_classified_adj['classified'])
+        # create a binary mask for everything above the first instance of 75% snow-covered
+        elevation_threshold_mask = xr.where(im_classified.elevation > elev_75_snow, 1, 0)
+
+    else:
+        im_classified_adj = im_classified
+        elevation_threshold_mask = None
+
+    # -----Delineate snow lines
+    # create binary snow matrix
+    im_binary = xr.where(im_classified_adj > 2, 1, 0).classified.data
+    # fill holes in binary image (0s within 1s = 1)
+    im_binary_no_holes = binary_fill_holes(im_binary)
+    # find contours at a constant value of 0.5 (between 0 and 1)
+    contours = find_contours(im_binary_no_holes, 0.5)
+    # convert contour points to image coordinates
+    contours_coords = []
+    for contour in contours:
+        # convert image pixel coordinates to real coordinates
+        fx = interp1d(range(0, len(im_classified_adj.x.data)), im_classified_adj.x.data)
+        fy = interp1d(range(0, len(im_classified_adj.y.data)), im_classified_adj.y.data)
+        coords = (fx(contour[:, 1]), fy(contour[:, 0]))
+        # zip points together
+        xy = list(zip([x for x in coords[0]],
+                      [y for y in coords[1]]))
+        contours_coords.append(xy)
+
+    # convert list of coordinates to list of LineStrings
+    # do not include points in the no data mask or points above the elevation threshold
+    contour_lines = []
+    for contour_coords in contours_coords:
+        # use elevation_threshold_mask to filter points if it exists
+        if elevation_threshold_mask is not None:
+            points_real = [Point(x, y) for x, y in contour_coords
+                           if im_classified.sel(x=x, y=y, method='nearest').no_data_mask.data.item()
+                           and ~np.isnan(im_classified.sel(x=x, y=y, method='nearest').elevation.data.item())
+                           and (elevation_threshold_mask.sel(x=x, y=y, method='nearest').data.item() == 0)
+                           ]
+        else:
+            points_real = [Point(x, y) for x, y in contour_coords
+                           if im_classified.sel(x=x, y=y, method='nearest').no_data_mask.data.item()
+                           and ~np.isnan(im_classified.sel(x=x, y=y, method='nearest').elevation.data.item())
+                           ]
+
+        if len(points_real) > 2:  # need at least 2 points for a LineString
+            contour_line = LineString([[point.x, point.y] for point in points_real])
+            contour_lines.append(contour_line)
+
+    # proceed if lines were found after filtering
+    if len(contour_lines) > 0:
+
+        # -----Use the longest line as the snowline
+        lengths = [line.length for line in contour_lines]
+        max_length_index = max(range(len(contour_lines)), key=lambda i: lengths[i])
+        snowline = contour_lines[max_length_index]
+
+        # -----Interpolate elevations at snow line coordinates
+        # compile all line coordinates into arrays of x- and y-coordinates
+        xpts = np.ravel([x for x in snowline.coords.xy[0]])
+        ypts = np.ravel([y for y in snowline.coords.xy[1]])
+        # interpolate elevation at snow line points
+        snowline_elevs = [im_classified.sel(x=x, y=y, method='nearest').elevation.data.item()
+                          for x, y in list(zip(xpts, ypts))]
+
+    else:
+
+        snowline = []
+        snowline_elevs = np.nan
+
+    # -----If AOI is ~covered in snow, set snowline elevation to the minimum elevation in the AOI
+    if np.all(np.isnan(snowline_elevs)) and (np.nanmedian(hist_snow_est_elev_norm) > 0.5):
+        snowline_elevs = np.nanmin(np.ravel(im_classified.elevation.data))
+
+    # -----Calculate snow-covered area (SCA) and accumulation area ratio (AAR)
+    # pixel resolution
+    dx = im_classified.x.data[1] - im_classified.x.data[0]
+    # snow-covered area
+    sca = len(np.ravel(im_classified.classified.data[im_classified.classified.data <= 2])) * (
+            dx ** 2)  # number of snow-covered pixels * pixel resolution [m^2]
+    # accumulation area ratio
+    total_area = len(np.ravel(im_classified.classified.data[~np.isnan(im_classified.classified.data)])) * (
+            dx ** 2)  # number of pixels * pixel resolution [m^2]
+    aar = sca / total_area
+
+    # -----Compile results in dataframe
+    # calculate median snow line elevation
+    median_snowline_elev = np.nanmedian(snowline_elevs)
+    # compile results in df
+    if type(snowline) == LineString:
+        snowlines_coords_x = [snowline.coords.xy[0]]
+        snowlines_coords_y = [snowline.coords.xy[1]]
+    else:
+        snowlines_coords_x = [[]]
+        snowlines_coords_y = [[]]
+    snowline_df = pd.DataFrame({'site_name': [site_name],
+                                'datetime': [im_date],
+                                'snowlines_coords_X': snowlines_coords_x,
+                                'snowlines_coords_Y': snowlines_coords_y,
+                                'CRS': ['EPSG:' + str(im_xr.rio.crs.to_epsg())],
+                                'snowline_elevs_m': [snowline_elevs],
+                                'snowline_elevs_median_m': [median_snowline_elev],
+                                'SCA_m2': [sca],
+                                'AAR': [aar],
+                                'dataset': [dataset],
+                                'geometry': [snowline]
+                                })
+
+    # -----Save snowline df to file
+    # reduce memory storage of dataframe
+    snowline_df = reduce_memory_usage(snowline_df, verbose=False)
+    # save using user-specified file extension
+    if 'pkl' in snowline_fn:
+        snowline_df.to_pickle(out_path + snowline_fn)
+        if verbose:
+            print('Snowline saved to file: ' + out_path + snowline_fn)
+    elif 'csv' in snowline_fn:
+        snowline_df.to_csv(out_path + snowline_fn, index=False)
+        if verbose:
+            print('Snowline saved to file: ' + out_path + snowline_fn)
+    else:
+        print('Please specify snowline_fn with extension .pkl or .csv. Exiting...')
+        return 'N/A'
+
+    # -----Plot results
+    if plot_results:
+        fig, ax = plt.subplots(2, 2, figsize=(12, 8), gridspec_kw={'height_ratios': [3, 1]})
+        ax = ax.flatten()
+        # define x and y limits
+        xmin, xmax = aoi.geometry[0].buffer(100).bounds[0] / 1e3, aoi.geometry[0].buffer(100).bounds[2] / 1e3
+        ymin, ymax = aoi.geometry[0].buffer(100).bounds[1] / 1e3, aoi.geometry[0].buffer(100).bounds[3] / 1e3
+        # define colors for plotting
+        colors = list(dataset_dict['classified_image']['class_colors'].values())
+        cmp = matplotlib.colors.ListedColormap(colors)
+        # RGB image
+        ax[0].imshow(np.dstack([im_xr[ds_dict['RGB_bands'][0]].data,
+                                im_xr[ds_dict['RGB_bands'][1]].data,
+                                im_xr[ds_dict['RGB_bands'][2]].data]),
+                     extent=(np.min(im_xr.x.data) / 1e3, np.max(im_xr.x.data) / 1e3, np.min(im_xr.y.data) / 1e3,
+                             np.max(im_xr.y.data) / 1e3))
+        ax[0].set_xlabel('Easting [km]')
+        ax[0].set_ylabel('Northing [km]')
+        # classified image
+        ax[1].imshow(im_classified['classified'].data, cmap=cmp, clim=(1, 5),
+                     extent=(np.min(im_classified.x.data) / 1e3, np.max(im_classified.x.data) / 1e3,
+                             np.min(im_classified.y.data) / 1e3, np.max(im_classified.y.data) / 1e3))
+        # snowline coordinates
+        if type(snowline) == LineString:
+            ax[0].plot(np.divide(snowline.coords.xy[0], 1e3), np.divide(snowline.coords.xy[1], 1e3),
+                       '.', color='#f768a1', markersize=2)
+            ax[1].plot(np.divide(snowline.coords.xy[0], 1e3), np.divide(snowline.coords.xy[1], 1e3),
+                       '.', color='#f768a1', markersize=2)
+        # plot dummy points for legend
+        ax[1].scatter(0, 0, color=colors[0], s=50, label='Snow')
+        ax[1].scatter(0, 0, color=colors[1], s=50, label='Shadowed snow')
+        ax[1].scatter(0, 0, color=colors[2], s=50, label='Ice')
+        ax[1].scatter(0, 0, color=colors[3], s=50, label='Rock')
+        ax[1].scatter(0, 0, color=colors[4], s=50, label='Water')
+        if type(snowline) == LineString:
+            ax[0].scatter(0, 0, color='#f768a1', s=25, label='Snowline estimate')
+            ax[1].scatter(0, 0, color='#f768a1', s=25, label='Snowline estimate')
+        ax[1].set_xlabel('Easting [km]')
+        # AOI
+        label = 'AOI'
+        if type(aoi.geometry[0].boundary) == MultiLineString:
+            for ii, geom in enumerate(aoi.geometry[0].boundary.geoms):
+                if ii > 0:
+                    label = '_nolegend_'
+                ax[0].plot(np.divide(geom.coords.xy[0], 1e3),
+                           np.divide(geom.coords.xy[1], 1e3), '-k', linewidth=1, label=label)
+                ax[1].plot(np.divide(geom.coords.xy[0], 1e3),
+                           np.divide(geom.coords.xy[1], 1e3), '-k', linewidth=1, label=label)
+        elif type(aoi.geometry[0].boundary) == LineString:
+            ax[0].plot(np.divide(aoi.geometry[0].boundary.coords.xy[0], 1e3),
+                       np.divide(aoi.geometry[0].boundary.coords.xy[1], 1e3), '-k', linewidth=1, label=label)
+            ax[1].plot(np.divide(aoi.geometry[0].boundary.coords.xy[0], 1e3),
+                       np.divide(aoi.geometry[0].boundary.coords.xy[1], 1e3), '-k', linewidth=1, label=label)
+
+        # reset x and y limits
+        ax[0].set_xlim(xmin, xmax)
+        ax[0].set_ylim(ymin, ymax)
+        ax[1].set_xlim(xmin, xmax)
+        ax[1].set_ylim(ymin, ymax)
+        # image bands histogram
+        ax[2].hist(im_xr[ds_dict['RGB_bands'][0]].data.flatten(), color='blue', histtype='step', linewidth=2,
+                   bins=100, label="blue")
+        ax[2].hist(im_xr[ds_dict['RGB_bands'][1]].data.flatten(), color='green', histtype='step', linewidth=2,
+                   bins=100, label="green")
+        ax[2].hist(im_xr[ds_dict['RGB_bands'][2]].data.flatten(), color='red', histtype='step', linewidth=2,
+                   bins=100, label="red")
+        ax[2].set_xlabel("Surface reflectance")
+        ax[2].set_ylabel("Pixel counts")
+        ax[2].grid()
+        # normalized snow elevations histogram
+        ax[3].bar(bin_centers, hist_snow_est_elev_norm, width=(bin_centers[1] - bin_centers[0]), color=colors[0],
+                  align='center')
+        ax[3].plot([median_snowline_elev, median_snowline_elev], [0, 1], '-', color='#f768a1',
+                   linewidth=3, label='Median snowline elevation')
+        ax[3].set_xlabel("Elevation [m]")
+        ax[3].set_ylabel("Fraction snow-covered")
+        ax[3].grid()
+        ax[3].set_xlim(elev_min - 10, elev_max + 10)
+        ax[3].set_ylim(0, 1)
+        # determine figure title and file name
+        title = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snow-cover'
+        # add legends
+        ax[0].legend(loc='best')
+        ax[1].legend(loc='best')
+        ax[2].legend(loc='upper right')
+        ax[3].legend(loc='lower right')
+        fig.suptitle(title)
+        fig.tight_layout()
+        # save figure
+        fig_fn = figures_out_path + title + '.png'
+        fig.savefig(fig_fn, dpi=300, facecolor='white', edgecolor='none')
+        if verbose:
+            print('Figure saved to file:' + fig_fn)
+
+    return snowline_df
 
 
 # --------------------------------------------------
