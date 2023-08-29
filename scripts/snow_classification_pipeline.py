@@ -28,18 +28,18 @@ Outline:
 ##### MODIFY HERE #####
 
 # -----Paths in directory
-site_name = 'Hidden'
+site_name = 'LemonCreek'
 # path to snow-cover-mapping/ - Make sure you include a "/" at the end
 base_path = '/Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/'
 # path to AOI including the name of the shapefile
-AOI_path = '/Users/raineyaberle/Google Drive/My Drive/Research/PhD/snow_cover_mapping/study-sites/' + site_name + '/AOIs/'
+AOI_path = '/Users/raineyaberle/Google Drive/My Drive/Research/PhD/snow_cover_mapping/snow_cover_mapping_application/study-sites/' + site_name + '/AOIs/'
 # AOI file name
-AOI_fn = 'Hidden_RGI_outline.shp'
+AOI_fn = 'LemonCreek_USGS_glacier_outline_2021.shp'
 # path to DEM including the name of the tif file
 # Note: set DEM_path==None and DEM_fn=None if you want to use the ASTER GDEM via Google Earth Engine
 DEM_path = AOI_path + '../DEMs/'
 # DEM file name
-DEM_fn = None
+DEM_fn = 'LemonCreek_ArcticDEM_clip.tif'
 # path for output images
 out_path = AOI_path + '../imagery/'
 # path to PlanetScope images
@@ -51,7 +51,7 @@ figures_out_path = AOI_path + '../figures/'
 # -----Define steps to run
 # Note: 1=Sentinel-2_TOA, 2=Sentinel-2_SR, 3=Landsat, 4=PlanetScope
 # Enclose steps in brackets, e.g. steps_to_run = [1,2]
-steps_to_run = [3]
+steps_to_run = [1]
 
 # -----Define image search filters
 date_start = '2013-05-01'
@@ -61,7 +61,7 @@ month_end = 11
 cloud_cover_max = 70
 
 # -----Determine whether to print details for each image at each processing step
-verbose = False
+verbose = True
 
 # -----Determine whether to mask clouds using the respective cloud masking data products
 # NOTE: Cloud mask products anecdotally are less accurate over glacierized/snow-covered surfaces.
@@ -215,15 +215,8 @@ if 1 in steps_to_run:
                     print(' ')
                 continue  # no need to load snowline if it already exists
             else:
-                plot_results = True
-                # create directory for figures if it doesn't already exist
-                if (not os.path.exists(figures_out_path)) & plot_results:
-                    os.mkdir(figures_out_path)
-                    print('Created directory for output figures: ' + figures_out_path)
-                snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset,
-                                                         im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                         plot_results)
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -302,15 +295,8 @@ if 2 in steps_to_run:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                plot_results = True
-                # create directory for figures if it doesn't already exist
-                if (not os.path.exists(figures_out_path)) & plot_results:
-                    os.mkdir(figures_out_path)
-                    print('Created directory for output figures: ' + figures_out_path)
-                snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset,
-                                                         im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                         plot_results)
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -384,15 +370,8 @@ if 3 in steps_to_run:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                plot_results = True
-                # create directory for figures if it doesn't already exist
-                if (not os.path.exists(figures_out_path)) & plot_results:
-                    os.mkdir(figures_out_path)
-                    print('Created directory for output figures: ' + figures_out_path)
-                snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset,
-                                                         im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                         plot_results)
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -479,19 +458,15 @@ if 4 in steps_to_run:
 
         # -----Delineate snowline(s)
         plot_results = True
-        # create directory for figures if it doesn't already exist
-        if (os.path.exists(figures_out_path) == False) & (plot_results == True):
-            os.mkdir(figures_out_path)
-            print('Created directory for output figures: ' + figures_out_path)
         # check if snowline already exists in file
         snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
         if os.path.exists(snowlines_path + snowline_fn):
             if verbose:
                 print('Snowline already exists in file, skipping...')
         else:
-            snowline_df = f.delineate_image_snowline(im_adj, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
-                                                     im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                     plot_results)
+            snowline_df = f.delineate_snowline(im_adj, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                                               im_date, snowline_fn, snowlines_path, figures_out_path,
+                                               plot_results)
             if verbose:
                 print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
         if verbose:

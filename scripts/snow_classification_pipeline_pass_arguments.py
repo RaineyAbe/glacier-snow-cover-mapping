@@ -66,7 +66,7 @@ parser.add_argument('-im_download', default=False, type=bool, help='Whether to d
 parser.add_argument('-steps_to_run', default=None, nargs="+", type=int,
                     help='List of steps to be run, e.g. [1, 2, 3]. '
                          '1=Sentinel-2_TOA, 2=Sentinel-2_SR, 3=Landsat, 4=PlanetScope')
-parser.add_argument('-verbose', default=False, type=bool,
+parser.add_argument('-verbose', action='store_true',
                     help='Whether to print details for each image at each processing step.')
 args = parser.parse_args()
 
@@ -179,7 +179,8 @@ if 1 in steps_to_run:
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
-            print(im_date)
+            if verbose:
+                print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -209,7 +210,7 @@ if 1 in steps_to_run:
             else:
                 # classify image
                 im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                                 dataset_dict, dataset, im_classified_fn, im_classified_path)
+                                                 dataset_dict, dataset, im_classified_fn, im_classified_path, verbose)
                 if type(im_classified) == str:  # skip if error in classification
                     continue
 
@@ -222,14 +223,9 @@ if 1 in steps_to_run:
                     print(' ')
                 continue  # no need to load snowline if it already exists
             else:
-                plot_results = True
-                # create directory for figures if it doesn't already exist
-                if (not os.path.exists(figures_out_path)) & plot_results:
-                    os.mkdir(figures_out_path)
-                    print('Created directory for output figures: ' + figures_out_path)
-                snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset, im_date, snowline_fn, snowlines_path,
-                                                         figures_out_path, plot_results, verbose)
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
+                                                   verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -266,7 +262,8 @@ if 2 in steps_to_run:
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
-            print(im_date)
+            if verbose:
+                print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -296,7 +293,7 @@ if 2 in steps_to_run:
             else:
                 # classify image
                 im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                                 dataset_dict, dataset, im_classified_fn, im_classified_path)
+                                                 dataset_dict, dataset, im_classified_fn, im_classified_path, verbose)
                 if type(im_classified) == str:  # skip if error in classification
                     continue
 
@@ -308,14 +305,9 @@ if 2 in steps_to_run:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                plot_results = True
-                # create directory for figures if it doesn't already exist
-                if (not os.path.exists(figures_out_path)) & plot_results:
-                    os.mkdir(figures_out_path)
-                    print('Created directory for output figures: ' + figures_out_path)
-                snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset,im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                         plot_results, verbose)
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
+                                                   verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -352,7 +344,8 @@ if 3 in steps_to_run:
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
-            print(im_date)
+            if verbose:
+                print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -377,7 +370,7 @@ if 3 in steps_to_run:
             else:
                 # classify image
                 im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                                 dataset_dict, dataset, im_classified_fn, im_classified_path)
+                                                 dataset_dict, dataset, im_classified_fn, im_classified_path, verbose)
                 if type(im_classified) == str:  # skip if error in classification
                     continue
 
@@ -389,15 +382,9 @@ if 3 in steps_to_run:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                plot_results = True
-                # create directory for figures if it doesn't already exist
-                if (not os.path.exists(figures_out_path)) & plot_results:
-                    os.mkdir(figures_out_path)
-                    print('Created directory for output figures: ' + figures_out_path)
-                snowline_df = f.delineate_image_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict,
-                                                         dataset,
-                                                         im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                         plot_results)
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
+                                                   verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -478,25 +465,20 @@ if 4 in steps_to_run:
             im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
         else:
             im_classified = f.classify_image(im_adj, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                             dataset_dict, dataset, im_classified_fn, im_classified_path)
+                                             dataset_dict, dataset, im_classified_fn, im_classified_path, verbose)
         if type(im_classified) == str:
             continue
 
         # -----Delineate snowline(s)
-        plot_results = True
-        # create directory for figures if it doesn't already exist
-        if (os.path.exists(figures_out_path) == False) & (plot_results == True):
-            os.mkdir(figures_out_path)
-            print('Created directory for output figures: ' + figures_out_path)
         # check if snowline already exists in file
         snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
         if os.path.exists(snowlines_path + snowline_fn):
             if verbose:
                 print('Snowline already exists in file, skipping...')
         else:
-            snowline_df = f.delineate_image_snowline(im_adj, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
-                                                     im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                     plot_results)
+            plot_results = True
+            snowline_df = f.delineate_snowline(im_adj, im_classified, site_name, AOI_UTM, dataset_dict, dataset, im_date,
+                                               snowline_fn, snowlines_path, figures_out_path, plot_results, verbose)
             if verbose:
                 print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
         if verbose:

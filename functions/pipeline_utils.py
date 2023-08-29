@@ -1058,7 +1058,7 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, datas
     # -----Create no data mask
     no_data_mask = xr.where(np.isnan(im_classified), 1, 0).classified.data
     # dilate by 30 m
-    iterations = int(ds_dict['resolution_m'] / 30)  # number of pixels equal to 30 m
+    iterations = int(30 / ds_dict['resolution_m'])  # number of pixels equal to 30 m
     dilated_mask = binary_dilation(no_data_mask, iterations=iterations)
     no_data_mask = np.logical_not(dilated_mask)
     # add no_data_mask variable classified image
@@ -1094,12 +1094,12 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, datas
         im_classified_adj['classified'] = xr.where(im_classified_adj['elevation'] > elev_75_snow, 1,
                                                    im_classified_adj['classified'])
         # create a binary mask for everything above the first instance of 25% snow-covered
-        sca_perc_threshold = 0.25
+        sca_perc_threshold = 0.1
         if np.any(hist_snow_est_elev_norm > sca_perc_threshold):
             elev_25_snow = bin_centers[np.argmax(hist_snow_est_elev_norm > sca_perc_threshold)]
             elevation_threshold_mask = xr.where(im_classified.elevation > elev_25_snow, 1, 0)
         else:
-            elevation_threshold_mask = xr.where(~np.isnan(im_classified.elevation), 0, 0)
+            elevation_threshold_mask = None
 
     else:
         im_classified_adj = im_classified
@@ -1132,13 +1132,11 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, datas
         if elevation_threshold_mask is not None:
             points_real = [Point(x, y) for x, y in contour_coords
                            if im_classified.sel(x=x, y=y, method='nearest').no_data_mask.data.item()
-                           and ~np.isnan(im_classified.sel(x=x, y=y, method='nearest').elevation.data.item())
                            and (elevation_threshold_mask.sel(x=x, y=y, method='nearest').data.item() == 1)
                            ]
         else:
             points_real = [Point(x, y) for x, y in contour_coords
                            if im_classified.sel(x=x, y=y, method='nearest').no_data_mask.data.item()
-                           and ~np.isnan(im_classified.sel(x=x, y=y, method='nearest').elevation.data.item())
                            ]
 
         if len(points_real) > 2:  # need at least 2 points for a LineString
@@ -1229,6 +1227,11 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, datas
         # define colors for plotting
         colors = list(dataset_dict['classified_image']['class_colors'].values())
         cmp = matplotlib.colors.ListedColormap(colors)
+        # RGB image
+        ax[0].imshow(np.dstack([im_xr[dataset_dict[dataset]['RGB_bands'][0]].values,
+                                im_xr[dataset_dict[dataset]['RGB_bands'][1]].values,
+                                im_xr[dataset_dict[dataset]['RGB_bands'][2]].values]),
+                     extent=(xmin, xmax, ymin, ymax))
         # classified image
         ax[1].imshow(im_classified['classified'].data, cmap=cmp, clim=(1, 5),
                      extent=(np.min(im_classified.x.data) / 1e3, np.max(im_classified.x.data) / 1e3,
