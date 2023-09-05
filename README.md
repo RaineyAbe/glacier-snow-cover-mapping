@@ -7,7 +7,7 @@ Department of Geosciences, Boise State University
 Contact: raineyaberle@u.boisestate.edu
 
 ## Description
-Workflow for detecting glacier snow-covered area, seasonal snowlines, and equilibrium line altitudes in PlanetScope 4-band, Landsat 8/9, and Sentinel-2 imagery.
+Workflow for detecting glacier snow-covered area, accumulation area ratios, and seasonal snowlines in PlanetScope 4-band, Landsat 8/9, and Sentinel-2 imagery.
 
 _Basic image processing workflow:_
 
@@ -17,8 +17,8 @@ _Basic image processing workflow:_
 
 1. __Google Earth Engine account__ to access Landsat and Sentinel-2 imagery. [Sign up here](https://earthengine.google.com/new_signup/).
 2. (Optional) __Planet account__ ([sign up here](https://www.planet.com/signup/)) with access to PlanetScope imagery through the NASA Commercial SmallSat Data Acquisition program ([apply here](https://www.planet.com/markets/nasa/)). It may take time for your account to be approved for free PlanetScope images access. 
-3. __Shapefile__ containing a polygon of your area of interest (AOI). This will be used for querying imagery from Google Earth Engine and cropping images before classifying. 
-4. (Optional) __Digital elevation model (DEM)__. If you do not specify a DEM, the code will automatically use the ArcticDEM Mosaic where there is coverage and the NASADEM otherwise. 
+3. __Shapefile__ containing a polygon of your area of interest (AOI). This is used for querying imagery from Google Earth Engine and/or Planet Labs, Inc. and cropping images before classifying. 
+4. (Optional) __Digital elevation model (DEM)__. If you do not specify a DEM, the code will automatically use the ArcticDEM Mosaic where there is coverage and the NASADEM otherwise, accessed through the GEE data repository. 
 
 ## Installation
 Please see the [Installation Instructions](https://github.com/RaineyAbe/snow-cover-mapping/blob/main/docs/installation_instructions.md). 
