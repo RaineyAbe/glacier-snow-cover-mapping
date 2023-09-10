@@ -1,8 +1,7 @@
 # duplicate the slurm_snowlines_SITE-ID.bash file and save with new site ID
 
 old_id = "SITE-ID"
-new_ids = ["01.19814", "01.19825", "01.20196", "01.20279", "01.20309",
-           "01.20324", "01.20796", "01.21014", "01.22193", "01.22699"]
+new_ids = ["01.23635", "01.23649", "01.23664", "01.26738", "01.27103", "02.04403", "02.05157"]
 
 # Load input file
 input_fn = "slurm_RGI60-SITE-ID.bash"
@@ -22,4 +21,3 @@ for new_id in new_ids:
     with open(output_fn, "w") as output_file:
         output_file.write(new_content)
     print("Saved new bash file for " + new_id)
-    
