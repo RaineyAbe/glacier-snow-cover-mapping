@@ -1000,7 +1000,7 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
 
 
 # --------------------------------------------------
-def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, dataset, im_date, snowline_fn,
+def delineate_snowline(im_xr, im_classified, site_name, aoi, dem, dataset_dict, dataset, im_date, snowline_fn,
                        out_path, figures_out_path, plot_results, verbose=False):
     """
     Delineate the seasonal snowline in classified images. Snowlines will likely not be detected in images with nearly all or no snow.
@@ -1015,6 +1015,10 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, datas
         name of study site used for output file names
     aoi:  geopandas.geodataframe.GeoDataFrame
         area of interest used to crop classified images
+        must be in the same coordinate reference system as the classified image
+    dem: xarray.Dataset
+        digital elevation model over the aoi, used to calculate the ELA from the AAR
+        must be in the same coordinate reference system as the classified image
     dataset_dict: dict
         dictionary of dataset-specific parameters
     dataset: str
@@ -1179,6 +1183,11 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, datas
             dx ** 2)  # number of pixels * pixel resolution [m^2]
     aar = sca / total_area
 
+    # -----Calculate the equilibrium line altitude (ELA) from the AAR
+    dem_clip = dem.rio.clip(aoi.geometry, aoi.crs)
+    elevations = np.ravel(dem_clip.elevation.data)
+    ela_from_aar = np.nanquantile(elevations, 1 - aar)
+
     # -----Compile results in dataframe
     # calculate median snow line elevation
     median_snowline_elev = np.nanmedian(snowline_elevs)
@@ -1198,6 +1207,7 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dataset_dict, datas
                                 'snowline_elevs_median_m': [median_snowline_elev],
                                 'SCA_m2': [sca],
                                 'AAR': [aar],
+                                'ELA_from_AAR_m': [ela_from_aar],
                                 'dataset': [dataset],
                                 'geometry': [snowline]
                                 })
