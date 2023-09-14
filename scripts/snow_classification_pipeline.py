@@ -215,7 +215,7 @@ if 1 in steps_to_run:
                     print(' ')
                 continue  # no need to load snowline if it already exists
             else:
-                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
                                                    im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
@@ -295,7 +295,7 @@ if 2 in steps_to_run:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
                                                    im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
@@ -370,7 +370,7 @@ if 3 in steps_to_run:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
                                                    im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
@@ -464,7 +464,7 @@ if 4 in steps_to_run:
             if verbose:
                 print('Snowline already exists in file, skipping...')
         else:
-            snowline_df = f.delineate_snowline(im_adj, im_classified, site_name, AOI_UTM, dataset_dict, dataset,
+            snowline_df = f.delineate_snowline(im_adj, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
                                                im_date, snowline_fn, snowlines_path, figures_out_path,
                                                plot_results)
             if verbose:
