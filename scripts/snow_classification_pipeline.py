@@ -99,13 +99,13 @@ import warnings
 warnings.simplefilter("ignore")
 
 # -----Set paths for output files
-S2_TOA_im_path = out_path + 'Sentinel-2_TOA/'
-S2_SR_im_path = out_path + 'Sentinel-2_SR/'
-L_im_path = out_path + 'Landsat/'
-PS_im_masked_path = out_path + 'PlanetScope/masked/'
-PS_im_mosaics_path = out_path + 'PlanetScope/mosaics/'
-im_classified_path = out_path + 'classified/'
-snowlines_path = out_path + 'snowlines/'
+S2_TOA_im_path = os.path.join(out_path, 'Sentinel-2_TOA')
+S2_SR_im_path = os.path.join(out_path, 'Sentinel-2_SR')
+L_im_path = os.path.join(out_path, 'Landsat')
+PS_im_masked_path = os.path.join(out_path, 'PlanetScope', 'masked')
+PS_im_mosaics_path = os.path.join(out_path, 'PlanetScope', 'mosaics')
+im_classified_path = os.path.join(out_path, 'classified')
+snowlines_path = os.path.join(out_path, 'snowlines')
 
 # -----Add path to functions
 sys.path.insert(1, base_path + 'functions/')
@@ -137,11 +137,9 @@ else:
     DEM = xr.open_dataset(DEM_path + DEM_fn)
     DEM = DEM.rename({'band_data': 'elevation'})
     # reproject the DEM to the optimal UTM zone
-    DEM = DEM.rio.reproject('EPSG:' + str(epsg_UTM))
-    DEM = DEM.rio.write_crs('EPSG:' + str(epsg_UTM))
-# remove unnecessary data (possible extra bands from ArcticDEM or other DEM)
-if len(np.shape(DEM.elevation.data)) > 2:
-    DEM['elevation'] = DEM.elevation[0]
+    DEM = DEM.rio.reproject('EPSG:'+str(epsg_UTM))
+    DEM = DEM.rio.write_crs('EPSG:'+str(epsg_UTM))
+
 
 # ------------------------- #
 # --- 1. Sentinel-2 TOA --- #
@@ -201,8 +199,8 @@ if 1 in steps_to_run:
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
             else:
                 # classify image
-                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                                 dataset_dict, dataset, im_classified_fn, im_classified_path)
+                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM, dataset_dict,
+                                                 dataset, im_classified_fn, im_classified_path)
                 if type(im_classified) == str:  # skip if error in classification
                     continue
 
@@ -216,7 +214,8 @@ if 1 in steps_to_run:
                 continue  # no need to load snowline if it already exists
             else:
                 snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
-                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
+                                                   verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -282,8 +281,8 @@ if 2 in steps_to_run:
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
             else:
                 # classify image
-                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                                 dataset_dict, dataset, im_classified_fn, im_classified_path)
+                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM, dataset_dict,
+                                                 dataset, im_classified_fn, im_classified_path)
                 if type(im_classified) == str:  # skip if error in classification
                     continue
 
@@ -296,7 +295,8 @@ if 2 in steps_to_run:
                 continue  # no need to load snowline if it already exists
             else:
                 snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
-                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
+                                                   verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -357,8 +357,8 @@ if 3 in steps_to_run:
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
             else:
                 # classify image
-                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                                 dataset_dict, dataset, im_classified_fn, im_classified_path)
+                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM, dataset_dict,
+                                                 dataset, im_classified_fn, im_classified_path)
                 if type(im_classified) == str:  # skip if error in classification
                     continue
 
@@ -371,7 +371,8 @@ if 3 in steps_to_run:
                 continue  # no need to load snowline if it already exists
             else:
                 snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
-                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results)
+                                                   im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
+                                                   verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -451,8 +452,8 @@ if 4 in steps_to_run:
             # remove no data values
             im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
         else:
-            im_classified = f.classify_image(im_adj, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM,
-                                             dataset_dict, dataset, im_classified_fn, im_classified_path)
+            im_classified = f.classify_image(im_adj, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM, dataset_dict,
+                                             dataset, im_classified_fn, im_classified_path)
         if type(im_classified) == str:
             continue
 
@@ -465,8 +466,8 @@ if 4 in steps_to_run:
                 print('Snowline already exists in file, skipping...')
         else:
             snowline_df = f.delineate_snowline(im_adj, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
-                                               im_date, snowline_fn, snowlines_path, figures_out_path,
-                                               plot_results)
+                                               im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
+                                               verbose)
             if verbose:
                 print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
         if verbose:

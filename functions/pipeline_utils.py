@@ -26,6 +26,8 @@ import glob
 from tqdm.auto import tqdm
 import datetime
 from sklearn.exceptions import NotFittedError
+import pyproj
+from pyproj.crs import CompoundCRS
 
 
 # --------------------------------------------------
@@ -123,14 +125,22 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
 
     Returns
     ----------
-    DEM_ds: xarray.Dataset
+    dem_ds: xarray.Dataset
         elevations extracted within the AOI
-    AOI_UTM: geopandas.geodataframe.GeoDataFrame
-        AOI reprojected to the appropriate UTM coordinate reference system
     """
 
     # -----Grab optimal UTM zone from AOI CRS
     epsg_utm = str(aoi_utm.crs.to_epsg())
+
+    # -----Define function to adjust data variables after downloading/loading
+    def adjust_data_vars(im_xr):
+        if 'band_data' in im_xr.data_vars:
+            im_xr = im_xr.rename({'band_data': 'elevation'})
+        if 'band' in im_xr.dims:
+            elev_data = im_xr.elevation.data[0]
+            im_xr = im_xr.drop_dims('band')
+            im_xr['elevation'] = (('y', 'x'), elev_data)
+        return im_xr
 
     # -----Define output image name(s), check if already exists in directory
     arcticdem_fn = site_name + '_ArcticDEM_clip.tif'
@@ -138,13 +148,11 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     if os.path.exists(out_path + arcticdem_fn):
         print('Clipped ArcticDEM already exists in directory, loading...')
         dem_ds = xr.open_dataset(out_path + arcticdem_fn)
-        dem_ds = dem_ds.rename({'band_data': 'elevation'})  # rename band data to "elevation"
-        dem_ds = dem_ds.rio.reproject('EPSG:' + str(epsg_utm))  # reproject to optimal UTM zone
+        dem_ds = adjust_data_vars(dem_ds)
     elif os.path.exists(out_path + nasadem_fn):
         print('Clipped NASADEM already exists in directory, loading...')
         dem_ds = xr.open_dataset(out_path + nasadem_fn)
-        dem_ds = dem_ds.rename({'band_data': 'elevation'})  # rename band data to "elevation"
-        dem_ds = dem_ds.rio.reproject('EPSG:' + str(epsg_utm))  # reproject to optimal UTM zone
+        dem_ds = adjust_data_vars(dem_ds)
     else:  # if no DEM exists in directory, load from GEE
 
         # -----Reformat AOI for clipping DEM
@@ -175,33 +183,53 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
             dem = gd.MaskedImage.from_id('UMN/PGC/ArcticDEM/V3/2m_mosaic', region=region)
             dem_fn = arcticdem_fn  # file name for saving
             res = 2  # spatial resolution [m]
+            elevation_source = 'ArcticDEM Mosaic (https://developers.google.com/earth-engine/datasets/catalog/UMN_PGC_ArcticDEM_V3_2m_mosaic)'
         else:
             print('No ArcticDEM coverage, using NASADEM')
             dem = gd.MaskedImage.from_id("NASA/NASADEM_HGT/001", region=region)
             dem_fn = nasadem_fn  # file name for saving
             res = 30  # spatial resolution [m]
+            elevation_source = 'NASADEM (https://developers.google.com/earth-engine/datasets/catalog/NASA_NASADEM_HGT_001)'
+
+        # -----Define function for transforming ellipsoid heights to geoid heights
+        def ellipsoid_to_geoid_heights(lons, lats, elevations):
+
+            # Define the source CRS (WGS 84 ellipsoid)
+            src_crs = pyproj.CRS(4979)
+            # Define the target CRS with EGM96 geoid as the vertical datum
+            target_crs = CompoundCRS(name="WGS 84 + EGM96 height", components=["EPSG:4326", "EPSG:5773"])
+            # Create a Pyproj Transformer object to perform the vertical transformation
+            vertical_transformer = pyproj.Transformer.from_crs(src_crs, target_crs, always_xy=True)
+
+            # Transform points
+            lons_mesh, lats_mesh = np.meshgrid(lons, lats)
+            x, y, elevations_geoid = vertical_transformer.transform(lons_mesh, lats_mesh, elevations)
+
+            return elevations_geoid
 
         # -----Download DEM and open as xarray.Dataset
-        # Try converting DEM to xarray.Dataset using wxee
-        try:
-            dem_ds = dem.ee_image.select('elevation').wx.to_xarray(scale=res, region=region, crs='EPSG:4326')
-            dem_ds = dem_ds.rio.to_crs('EPSG:' + epsg_utm)
-        # Otherwise, download using geedim and open as xarray.Dataset
-        except:
-            print('Downloading DEM to ' + out_path)
-            # create out_path if it doesn't exist
-            if not os.path.exists(out_path):
-                os.mkdir(out_path)
-            # download DEM
-            dem.download(out_path + dem_fn, region=region, scale=res)
-            # read DEM as xarray.Dataset
-            dem_ds = xr.open_dataset(out_path + dem_fn)
-            # reproject to UTM
-            dem_ds = dem_ds.rio.reproject('EPSG:' + str(epsg_utm))
-            dem_ds = dem_ds.rename({'band_data': 'elevation'})
-        # Remove unnecessary dimensions in elevation band
-        if len(np.shape(dem_ds.elevation.data)) > 2:
-            dem_ds['elevation'] = dem_ds.elevation[0]
+        print('Downloading DEM to ' + out_path)
+        # create out_path if it doesn't exist
+        if not os.path.exists(out_path):
+            os.mkdir(out_path)
+        # download DEM
+        dem.download(out_path + dem_fn, region=region, scale=res)
+        # read DEM as xarray.Dataset
+        dem_ds = xr.open_dataset(out_path + dem_fn)
+        dem_ds = adjust_data_vars(dem_ds)
+
+        # -----If using ArcticDEM, transform elevations with respect to the geoid (rather than the ellipsoid)
+        if 'ArcticDEM' in elevation_source:
+            print('Transforming elevations from the ellipsoid to the geoid...')
+            elevations_geoid = ellipsoid_to_geoid_heights(dem_ds.x.data, dem_ds.y.data, dem_ds.elevation.data)
+            dem_ds['elevation'] = (('y', 'x'), elevations_geoid)
+            # Re-save to file with updated elevations
+            dem_ds.rio.to_raster(out_path + dem_fn)
+            print('DEM re-saved with elevations referenced to the EGM96 geoid.')
+
+    # -----Reproject DEM to UTM
+    dem_ds = dem_ds.rio.reproject('EPSG:' + epsg_utm)
+    dem_ds = xr.where(dem_ds > 1e38, np.nan, dem_ds)
 
     return dem_ds
 
@@ -971,22 +999,18 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dem, dataset_dict
     # set coordinate reference system (CRS)
     im_classified_xr = im_classified_xr.rio.write_crs(im_xr.rio.crs)
 
-    # -----Determine snow covered elevations
-    # interpolate DEM to image coordinates
-    dem_aoi_interp = dem_aoi.interp(x=im_classified_xr.x.data, y=im_classified_xr.y.data, method='linear')
-
     # -----Prepare classified image for saving
-    # add elevation band
-    im_classified_xr['elevation'] = (('y', 'x'), dem_aoi_interp.elevation.data)
     # add time dimension
     im_classified_xr = im_classified_xr.expand_dims(dim={'time': [np.datetime64(im_date)]})
-    # add additional attributes for description and classes
+    # add additional attributes to image before saving
     im_classified_xr = im_classified_xr.assign_attrs({'Description': 'Classified image',
-                                                      'NoDataValues': '-9999',
-                                                      'Classes': '1 = Snow, 2 = Shadowed snow, 4 = Ice, '
-                                                                 '5 = Rock, 6 = Water'})
+                                                      'Classes': '1 = Snow, 2 = Shadowed snow, 4 = Ice, 5 = Rock, 6 = Water',
+                                                      'NoDataValues': '-9999'
+                                                      })
     # replace NaNs with -9999, convert data types to int
     im_classified_xr_int = im_classified_xr.fillna(-9999).astype(int)
+    # reproject to WGS84 horizontal coordinates for consistency before saving
+    im_classified_xr_int = im_classified_xr_int.rio.reproject('EPSG:4326')
 
     # -----Save to file
     if '.nc' in im_classified_fn:
@@ -1008,13 +1032,13 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dem, dataset_dict, 
     Parameters
     ----------
     im_xr: xarray.Dataset
-        input image used for plotting
+        input reflectance image, used for plotting
     im_classified: xarray.Dataset
-        classified image used to delineate snowlines
+        classified image, used to delineate snowlines
     site_name: str
-        name of study site used for output file names
+        name of study site, used for output file names
     aoi:  geopandas.geodataframe.GeoDataFrame
-        area of interest used to crop classified images
+        area of interest, used to crop classified images
         must be in the same coordinate reference system as the classified image
     dem: xarray.Dataset
         digital elevation model over the aoi, used to calculate the ELA from the AAR
@@ -1024,13 +1048,13 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dem, dataset_dict, 
     dataset: str
         name of dataset ('Landsat', 'Sentinel2', 'PlanetScope')
     im_date: str
-        image capture datetime ('YYYYMMDDTHHmmss')
+        image capture datetime (format: 'YYYYMMDDTHHmmss')
     snowline_fn: str
         file name of snowline to be saved in out_path
     out_path: str
-        path in directory for output snowlines
+        path to directory where output snowline will be saved
     figures_out_path: str
-        path in directory for figures
+        path to directory where figure will be saved
     plot_results: bool
         whether to plot RGB image, classified image, and resulting snowline and save figure to file
     verbose: bool
@@ -1068,8 +1092,14 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dem, dataset_dict, 
     # add no_data_mask variable classified image
     im_classified = im_classified.assign(no_data_mask=(["y", "x"], no_data_mask))
 
+    # -----Clip DEM to AOI and interpolate to classified image coordinates
+    dem_aoi = dem.rio.clip(aoi.geometry, aoi.crs)
+    dem_aoi_interp = dem_aoi.interp(x=im_classified.x.data, y=im_classified.y.data, method='linear')
+    # add elevation as a band to classified image for convenience
+    im_classified['elevation'] = (('y', 'x'), dem_aoi_interp.elevation.data)
+
     # -----Determine snow covered elevations
-    all_elev = np.ravel(im_classified.elevation.data)
+    all_elev = np.ravel(dem_aoi_interp.elevation.data)
     all_elev = all_elev[~np.isnan(all_elev)]  # remove NaNs
     snow_est_elev = np.ravel(im_classified.where((im_classified.classified <= 2))
                              .where(im_classified.classified != -9999).elevation.data)
@@ -1202,7 +1232,8 @@ def delineate_snowline(im_xr, im_classified, site_name, aoi, dem, dataset_dict, 
                                 'datetime': [im_date],
                                 'snowlines_coords_X': snowlines_coords_x,
                                 'snowlines_coords_Y': snowlines_coords_y,
-                                'CRS': ['EPSG:' + str(im_xr.rio.crs.to_epsg())],
+                                'HorizontalReference': ['EPSG:' + str(im_xr.rio.crs.to_epsg())],
+                                'VerticalReference': ['EGM96 geoid (EPSG:5773)'],
                                 'snowline_elevs_m': [snowline_elevs],
                                 'snowline_elevs_median_m': [median_snowline_elev],
                                 'SCA_m2': [sca],

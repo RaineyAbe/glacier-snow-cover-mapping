@@ -1,7 +1,8 @@
 # duplicate the slurm_snowlines_SITE-ID.bash file and save with new site ID
 
 old_id = "SITE-ID"
-new_ids = ["01.23635", "01.23649", "01.23664", "01.26738", "01.27103", "02.04403", "02.05157"]
+new_ids = ["01.16342", "01.17183", "01.17348", "01.17423", "01.15788",
+           "01.14883", "01.15769", "01.12425", "01.12635", "01.13696"]
 
 # Load input file
 input_fn = "slurm_RGI60-SITE-ID.bash"
