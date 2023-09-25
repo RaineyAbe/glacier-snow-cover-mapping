@@ -28,6 +28,7 @@ import datetime
 from sklearn.exceptions import NotFittedError
 import pyproj
 from pyproj.crs import CompoundCRS
+import concurrent.futures
 
 
 # --------------------------------------------------
@@ -132,7 +133,7 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     # -----Grab optimal UTM zone from AOI CRS
     epsg_utm = str(aoi_utm.crs.to_epsg())
 
-    # -----Define function to adjust data variables after downloading/loading
+    # -----Define some functions
     def adjust_data_vars(im_xr):
         if 'band_data' in im_xr.data_vars:
             im_xr = im_xr.rename({'band_data': 'elevation'})
@@ -142,13 +143,47 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
             im_xr['elevation'] = (('y', 'x'), elev_data)
         return im_xr
 
-    # -----Define output image name(s), check if already exists in directory
+    def transform_chunk(chunk):
+        lons, lats, elevation_chunk, vertical_transformer = chunk
+        lons_mesh, lats_mesh = np.meshgrid(lons, lats)
+        x, y, elevation_geoid_chunk = vertical_transformer.transform(lons_mesh, lats_mesh, elevation_chunk)
+        return elevation_geoid_chunk
+
+    def ellipsoid_to_geoid_heights(ds, base_path, out_path, out_fn):
+        print('Transforming elevations from the ellipsoid to the geoid...')
+
+        # Load EGM96 model from file
+        geoid_model_fn = os.path.join(base_path, 'inputs-outputs', 'us_nga_egm96_15.tif')
+        geoid_model = xr.open_dataset(geoid_model_fn)
+
+        # Resample geoid model to DEM coordinates
+        geoid_model_resampled = geoid_model.interp(x=ds.x, y=ds.y, method='linear')
+        geoid_height = geoid_model_resampled.band_data.data[0]
+
+        # Subtract geoid heights from ds heights, add to dataset
+        elevation_geoid = ds.elevation.data - geoid_height
+        ds['elevation'] = (('y', 'x'), elevation_geoid)
+
+        # Re-save to file with updated elevations
+        ds.rio.to_raster(out_path + out_fn)
+        print('DEM re-saved with elevations referenced to the EGM96 geoid.')
+
+        return ds
+
+    # -----Define output image names, check if already exists in directory
     arcticdem_fn = site_name + '_ArcticDEM_clip.tif'
+    arcticdem_geoid_fn = site_name + '_ArcticDEM_clip_geoid.tif'
     nasadem_fn = site_name + '_NASADEM_clip.tif'
-    if os.path.exists(out_path + arcticdem_fn):
+    if os.path.exists(out_path + arcticdem_geoid_fn):
+        print('Clipped ArcticDEM referenced to the geoid already exists in directory, loading...')
+        dem_ds = xr.open_dataset(out_path + arcticdem_geoid_fn)
+        dem_ds = adjust_data_vars(dem_ds)
+    elif os.path.exists(out_path + arcticdem_fn):
         print('Clipped ArcticDEM already exists in directory, loading...')
         dem_ds = xr.open_dataset(out_path + arcticdem_fn)
         dem_ds = adjust_data_vars(dem_ds)
+        # transform elevations from ellipsoid to geoid, save to file
+        dem_ds = ellipsoid_to_geoid_heights(dem_ds, base_path, out_path, arcticdem_geoid_fn)
     elif os.path.exists(out_path + nasadem_fn):
         print('Clipped NASADEM already exists in directory, loading...')
         dem_ds = xr.open_dataset(out_path + nasadem_fn)
@@ -191,45 +226,24 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
             res = 30  # spatial resolution [m]
             elevation_source = 'NASADEM (https://developers.google.com/earth-engine/datasets/catalog/NASA_NASADEM_HGT_001)'
 
-        # -----Define function for transforming ellipsoid heights to geoid heights
-        def ellipsoid_to_geoid_heights(lons, lats, elevations):
-
-            # Define the source CRS (WGS 84 ellipsoid)
-            src_crs = pyproj.CRS(4979)
-            # Define the target CRS with EGM96 geoid as the vertical datum
-            target_crs = CompoundCRS(name="WGS 84 + EGM96 height", components=["EPSG:4326", "EPSG:5773"])
-            # Create a Pyproj Transformer object to perform the vertical transformation
-            vertical_transformer = pyproj.Transformer.from_crs(src_crs, target_crs, always_xy=True)
-
-            # Transform points
-            lons_mesh, lats_mesh = np.meshgrid(lons, lats)
-            x, y, elevations_geoid = vertical_transformer.transform(lons_mesh, lats_mesh, elevations)
-
-            return elevations_geoid
-
         # -----Download DEM and open as xarray.Dataset
         print('Downloading DEM to ' + out_path)
         # create out_path if it doesn't exist
         if not os.path.exists(out_path):
             os.mkdir(out_path)
         # download DEM
-        dem.download(out_path + dem_fn, region=region, scale=res)
+        dem.download(out_path + dem_fn, region=region, scale=res, crs="EPSG:4326")
         # read DEM as xarray.Dataset
         dem_ds = xr.open_dataset(out_path + dem_fn)
         dem_ds = adjust_data_vars(dem_ds)
 
         # -----If using ArcticDEM, transform elevations with respect to the geoid (rather than the ellipsoid)
         if 'ArcticDEM' in elevation_source:
-            print('Transforming elevations from the ellipsoid to the geoid...')
-            elevations_geoid = ellipsoid_to_geoid_heights(dem_ds.x.data, dem_ds.y.data, dem_ds.elevation.data)
-            dem_ds['elevation'] = (('y', 'x'), elevations_geoid)
-            # Re-save to file with updated elevations
-            dem_ds.rio.to_raster(out_path + dem_fn)
-            print('DEM re-saved with elevations referenced to the EGM96 geoid.')
+            dem_ds = ellipsoid_to_geoid_heights(dem_ds, base_path, out_path, arcticdem_geoid_fn)
 
     # -----Reproject DEM to UTM
     dem_ds = dem_ds.rio.reproject('EPSG:' + epsg_utm)
-    dem_ds = xr.where(dem_ds > 1e38, np.nan, dem_ds)
+    dem_ds = xr.where((dem_ds > 1e38) | (dem_ds <= -9999), np.nan, dem_ds)
 
     return dem_ds
 
