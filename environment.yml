@@ -14,5 +14,8 @@ dependencies:
   - scikit-image
   - ipywidgets
   - contextily
+  - netcdf4
+  - h5netcdf
+  - dask
   - pip:
     - wxee
