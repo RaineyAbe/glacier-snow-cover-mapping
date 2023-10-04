@@ -104,28 +104,27 @@ print(site_name)
 print(' ')
 
 # -----Set paths for output files
-# Note: set PS_im_path=None if not using PlanetScope
-PS_im_path = out_path + 'PlanetScope/raw_images/'
-S2_TOA_im_path = out_path + 'Sentinel-2_TOA/'
-S2_SR_im_path = out_path + 'Sentinel-2_SR/'
-L_im_path = out_path + 'Landsat/'
-PS_im_masked_path = out_path + 'PlanetScope/masked/'
-PS_im_mosaics_path = out_path + 'PlanetScope/mosaics/'
-im_classified_path = out_path + 'classified/'
-snowlines_path = out_path + 'snowlines/'
+S2_TOA_im_path = os.path.join(out_path, 'Sentinel-2_TOA')
+S2_SR_im_path = os.path.join(out_path, 'Sentinel-2_SR')
+L_im_path = os.path.join(out_path, 'Landsat')
+PS_im_masked_path = os.path.join(out_path, 'PlanetScope', 'masked')
+PS_im_mosaics_path = os.path.join(out_path, 'PlanetScope', 'mosaics')
+im_classified_path = os.path.join(out_path, 'classified')
+snowlines_path = os.path.join(out_path, 'snowlines')
 
 # -----Add path to functions
-sys.path.insert(1, base_path + 'functions/')
+sys.path.insert(1, os.path.join(base_path, 'functions'))
 import pipeline_utils as f
 
 # -----Load dataset dictionary
-dataset_dict = json.load(open(base_path + 'inputs-outputs/datasets_characteristics.json'))
+dataset_dict_fn = os.path.join(base_path, 'inputs-outputs', 'datasets_characteristics.json')
+dataset_dict = json.load(open(dataset_dict_fn))
 
 # -----Authenticate and initialize GEE
 ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
 
 # -----Load AOI as gpd.GeoDataFrame
-AOI = gpd.read_file(AOI_path + AOI_fn)
+AOI = gpd.read_file(os.path.join(AOI_path, AOI_fn))
 # reproject the AOI to WGS to solve for the optimal UTM zone
 AOI_WGS = AOI.to_crs('EPSG:4326')
 AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
@@ -133,7 +132,7 @@ AOI_WGS_centroid = [AOI_WGS.geometry[0].centroid.xy[0][0],
 # grab the optimal UTM zone EPSG code
 epsg_UTM = f.convert_wgs_to_utm(AOI_WGS_centroid[0], AOI_WGS_centroid[1])
 # reproject AOI to the optimal UTM zone
-AOI_UTM = AOI.to_crs('EPSG:' + epsg_UTM)
+AOI_UTM = AOI.to_crs('EPSG:'+epsg_UTM)
 
 # -----Load DEM as Xarray DataSet
 if DEM_fn is None:
@@ -141,11 +140,12 @@ if DEM_fn is None:
     DEM = f.query_gee_for_dem(AOI_UTM, base_path, site_name, DEM_path)
 else:
     # load DEM as xarray DataSet
-    DEM = xr.open_dataset(DEM_path + DEM_fn)
+    DEM = xr.open_dataset(os.path.join(DEM_path, DEM_fn))
     DEM = DEM.rename({'band_data': 'elevation'})
+    # set no data values to NaN
+    DEM = xr.where((DEM > 1e38) | (DEM <= -9999), np.nan, DEM)
     # reproject the DEM to the optimal UTM zone
-    DEM = DEM.rio.reproject('EPSG:'+str(epsg_UTM))
-    DEM = DEM.rio.write_crs('EPSG:'+str(epsg_UTM))
+    DEM = DEM.rio.reproject('EPSG:'+str(epsg_UTM)).rio.write_crs('EPSG:'+str(epsg_UTM))
 
 
 # ------------------------- #
@@ -162,23 +162,22 @@ if 1 in steps_to_run:
                                       month_end, cloud_cover_max, mask_clouds, S2_TOA_im_path, im_download)
 
     # -----Load trained classifier and feature columns
-    clf_fn = base_path + 'inputs-outputs/Sentinel-2_TOA_classifier_all_sites.joblib'
+    clf_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_classifier_all_sites.joblib')
     clf = load(clf_fn)
-    feature_cols_fn = base_path + 'inputs-outputs/Sentinel-2_TOA_feature_columns.json'
+    feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_feature_columns.json')
     feature_cols = json.load(open(feature_cols_fn))
 
     # -----Loop through images
     if type(im_list) == str:  # check that images were found
-        print('No images found to classify, quitting...')
+        print('No images found to classify, quiting...')
     else:
-        print('Classifying images...')
+
         for i in tqdm(range(0, len(im_list))):
 
             # -----Subset image using loop index
             im_xr = im_list[i]
             im_date = str(im_xr.time.data[0])[0:19]
-            if verbose:
-                print(im_date)
+            print(im_date)
 
             # -----Adjust image for image scalar and no data values
             # replace no data values with NaN and account for image scalar
@@ -190,40 +189,39 @@ if 1 in steps_to_run:
                 im_xr = xr.where(im_xr == dataset_dict[dataset]['no_data_value'], np.nan, im_xr)
             # add NDSI band
             im_xr['NDSI'] = (
-                    (im_xr[dataset_dict[dataset]['NDSI_bands'][0]] - im_xr[dataset_dict[dataset]['NDSI_bands'][1]])
-                    / (im_xr[dataset_dict[dataset]['NDSI_bands'][0]] +
-                       im_xr[dataset_dict[dataset]['NDSI_bands'][1]]))
+                        (im_xr[dataset_dict[dataset]['NDSI_bands'][0]] - im_xr[dataset_dict[dataset]['NDSI_bands'][1]])
+                        / (im_xr[dataset_dict[dataset]['NDSI_bands'][0]] + im_xr[
+                    dataset_dict[dataset]['NDSI_bands'][1]]))
             im_xr.rio.write_crs('EPSG:' + str(crs), inplace=True)
 
             # -----Classify image
             # check if classified image already exists in file
             im_classified_fn = im_date.replace('-', '').replace(':',
                                                                 '') + '_' + site_name + '_' + dataset + '_classified.nc'
-            if os.path.exists(im_classified_path + im_classified_fn):
-                if verbose:
-                    print('Classified image already exists in file, continuing...')
-                im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
+            if os.path.exists(os.path.join(im_classified_path, im_classified_fn)):
+                print('Classified image already exists in file, continuing...')
+                im_classified = xr.open_dataset(os.path.join(im_classified_path, im_classified_fn))
                 # remove no data values
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
             else:
                 # classify image
-                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM, DEM, dataset_dict,
-                                                 dataset, im_classified_fn, im_classified_path, verbose)
+                im_classified = f.classify_image(im_xr, clf, feature_cols, crop_to_AOI, AOI_UTM,
+                                                 dataset_dict, dataset, im_classified_fn, im_classified_path, verbose)
                 if type(im_classified) == str:  # skip if error in classification
                     continue
 
             # -----Delineate snowline(s)
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
-            if os.path.exists(snowlines_path + snowline_fn):
+            if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
                 if verbose:
                     print('Snowline already exists in file, continuing...')
                     print(' ')
                 continue  # no need to load snowline if it already exists
             else:
-                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
+                snowline_df = f.delineate_snowline(im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
                                                    im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
-                                                   verbose)
+                                                   im_xr, verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -282,7 +280,7 @@ if 2 in steps_to_run:
             # check if classified image already exists in file
             im_classified_fn = im_date.replace('-', '').replace(':',
                                                                 '') + '_' + site_name + '_' + dataset + '_classified.nc'
-            if os.path.exists(im_classified_path + im_classified_fn):
+            if os.path.exists(os.path.join(im_classified_path, im_classified_fn)):
                 if verbose:
                     print('Classified image already exists in file, continuing...')
                 im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
@@ -298,14 +296,14 @@ if 2 in steps_to_run:
             # -----Delineate snowline(s)
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
-            if os.path.exists(snowlines_path + snowline_fn):
+            if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
                 if verbose:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
+                snowline_df = f.delineate_snowline(im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
                                                    im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
-                                                   verbose)
+                                                   im_xr, verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -359,7 +357,7 @@ if 3 in steps_to_run:
             # check if classified image already exists in file
             im_classified_fn = im_date.replace('-', '').replace(':',
                                                                 '') + '_' + site_name + '_' + dataset + '_classified.nc'
-            if os.path.exists(im_classified_path + im_classified_fn):
+            if os.path.exists(os.path.join(im_classified_path, im_classified_fn)):
                 if verbose:
                     print('Classified image already exists in file, continuing...')
                 im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
@@ -375,14 +373,14 @@ if 3 in steps_to_run:
             # -----Delineate snowline(s)
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
-            if os.path.exists(snowlines_path + snowline_fn):
+            if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
                 if verbose:
                     print('Snowline already exists in file, continuing...')
                 continue  # no need to load snowline if it already exists
             else:
-                snowline_df = f.delineate_snowline(im_xr, im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
+                snowline_df = f.delineate_snowline(im_classified, site_name, AOI_UTM, DEM, dataset_dict, dataset,
                                                    im_date, snowline_fn, snowlines_path, figures_out_path, plot_results,
-                                                   verbose)
+                                                   im_xr, verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
@@ -455,7 +453,7 @@ if 4 in steps_to_run:
         # -----Classify image
         im_classified_fn = im_date.replace('-', '').replace(':',
                                                             '') + '_' + site_name + '_' + dataset + '_classified.nc'
-        if os.path.exists(im_classified_path + im_classified_fn):
+        if os.path.exists(os.path.join(im_classified_path, im_classified_fn)):
             if verbose:
                 print('Classified image already exists in file, loading...')
             im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
@@ -470,7 +468,7 @@ if 4 in steps_to_run:
         # -----Delineate snowline(s)
         # check if snowline already exists in file
         snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
-        if os.path.exists(snowlines_path + snowline_fn):
+        if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
             if verbose:
                 print('Snowline already exists in file, skipping...')
         else:
