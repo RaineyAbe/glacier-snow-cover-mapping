@@ -28,6 +28,7 @@ import datetime
 from sklearn.exceptions import NotFittedError
 import PIL
 import io
+import wxee as wx
 
 
 # --------------------------------------------------
@@ -436,10 +437,14 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
                 im_collection = gd.MaskedCollection.from_list(im_gd_list)
                 # create image composite
                 im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
-                                                       mask=mask_clouds, region=region)
+                                                       mask=mask_clouds,
+                                                       region=region)
                 # download to file
-                im_composite.download(os.path.join(out_path, im_fn), region=region,
-                                      scale=dataset_dict[dataset]['resolution_m'], crs='EPSG:' + epsg_utm,
+                im_composite.download(os.path.join(out_path, im_fn),
+                                      region=region,
+                                      scale=dataset_dict[dataset]['resolution_m'],
+                                      crs='EPSG:' + epsg_utm,
+                                      dtype='float32',
                                       bands=im_composite.refl_bands)
             # load image from file
             im_da = rxr.open_rasterio(os.path.join(out_path, im_fn))
@@ -919,7 +924,7 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dataset_dict, dat
     Parameters
     ----------
     im_xr: xarray.Dataset
-        stack of images
+        input image
     clf: sklearn.classifier
         previously trained SciKit Learn Classifier
     feature_cols: array of pandas.DataFrame columns, e.g. ['blue', 'green', 'red']
@@ -1181,7 +1186,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     ds_dict = dataset_dict[dataset]
 
     # -----Remove time dimension
-    im_dt = np.datetime64(im_date[0:4] + '-' + im_date[4:6] + '-' + im_date[6:8])
+    im_dt = np.datetime64(im_date[0:10])
     im_classified = im_classified.isel(time=0)
 
     # -----Create no data mask
@@ -1349,13 +1354,13 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     snowline_df = reduce_memory_usage(snowline_df, verbose=False)
     # save using user-specified file extension
     if 'pkl' in snowline_fn:
-        snowline_df.to_pickle(out_path + snowline_fn)
+        snowline_df.to_pickle(os.path.join(out_path, snowline_fn))
         if verbose:
-            print('Snowline saved to file: ' + out_path + snowline_fn)
+            print('Snowline saved to file: ' + os.path.join(out_path, snowline_fn))
     elif 'csv' in snowline_fn:
-        snowline_df.to_csv(out_path + snowline_fn, index=False)
+        snowline_df.to_csv(os.path.join(out_path, snowline_fn), index=False)
         if verbose:
-            print('Snowline saved to file: ' + out_path + snowline_fn)
+            print('Snowline saved to file: ' + os.path.join(out_path, snowline_fn))
     else:
         print('Please specify snowline_fn with extension .pkl or .csv. Exiting...')
         return 'N/A'
@@ -1441,10 +1446,100 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
         fig.suptitle(title)
         fig.tight_layout()
         # save figure
-        fig_fn = figures_out_path + title + '.png'
+        fig_fn = os.path.join(figures_out_path, title + '.png')
         fig.savefig(fig_fn, dpi=300, facecolor='white', edgecolor='none')
         if verbose:
             print('Figure saved to file:' + fig_fn)
+
+    return snowline_df
+
+
+# --------------------------------------------------
+def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path, snowlines_path,
+                                  aoi_utm, dem, epsg_utm, clf, feature_cols, crop_to_aoi, figures_out_path,
+                                  plot_results, verbose):
+    """
+    Apply the classification and snow delineation pipeline to an image. Batch apply using Dask.
+
+    Parameters
+    ----------
+    im_xr: xarray.Dataset
+        input image
+    dataset_dict: dict
+        dictionary of dataset-specific parameters
+    dataset: str
+        name of dataset ('Landsat', 'Sentinel2', 'PlanetScope')
+    site_name: str
+        name of site, used for output file names
+    im_classified_path: str
+        path in directory where classified netCDF images will be saved
+    snowlines_path: str
+        path in directory where snowline CSV files will be saved
+    aoi_utm: geopandas.GeoDataFrame
+        area of interest with CRS in local UTM zone
+    dem: xarray.Dataset
+        digital elevation model
+    epsg_utm: str
+        EPSG code for local UTM zone
+    clf: sklearn.Classifier
+        image classsifier
+    feature_cols: list of str
+        list of bands to use to classify image
+    crop_to_aoi: bool
+        whether to crop images to AOI before classifying image
+    figures_out_path: str
+        path in directory where figures will be saved
+    plot_results: bool
+        whether to plot results and save figures
+    verbose: bool
+        whether to output details during processing steps
+
+    Returns
+    -------
+    snowline_df: pandas.DataFrame
+    """
+    # Grab image date string from time variable
+    im_date = str(im_xr.time.data[0])[0:19]
+    # Adjust image for image scalar and no data values
+    crs = im_xr.rio.crs.to_epsg()
+    band2 = list(dataset_dict[dataset]['refl_bands'].keys())[1]
+    if np.nanmean(im_xr[band2]) > 1e3:
+        im_xr = xr.where(im_xr == dataset_dict[dataset]['no_data_value'], np.nan,
+                         im_xr / dataset_dict[dataset]['image_scalar'])
+    else:
+        im_xr = xr.where(im_xr == dataset_dict[dataset]['no_data_value'], np.nan, im_xr)
+    # Add NDSI band
+    im_xr['NDSI'] = ((im_xr[dataset_dict[dataset]['NDSI_bands'][0]] - im_xr[dataset_dict[dataset]['NDSI_bands'][1]])
+                     / (im_xr[dataset_dict[dataset]['NDSI_bands'][0]] + im_xr[dataset_dict[dataset]['NDSI_bands'][1]]))
+    im_xr.rio.write_crs('EPSG:' + str(crs), inplace=True)
+
+    # Check if classified image already exists in file
+    im_classified_fn = im_date.replace('-', '').replace(':',
+                                                        '') + '_' + site_name + '_' + dataset + '_classified.nc'
+    if os.path.exists(os.path.join(im_classified_path, im_classified_fn)):
+        # load classified image from file
+        im_classified = xr.open_dataset(os.path.join(im_classified_path, im_classified_fn))
+        # remove no data values
+        im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
+        im_classified = im_classified.rio.write_crs('EPSG:4326').rio.reproject('EPSG:' + epsg_utm)
+    else:
+        # classify image
+        im_classified = classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi_utm,
+                                       dataset_dict, dataset, im_classified_fn, im_classified_path, verbose)
+        if type(im_classified) == str:  # skip if error in classification
+            return
+
+    # Check if snowline already exists in file
+    snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
+    if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
+        # No need to load snowline if it already exists
+        return
+    else:
+        # Delineate snowline
+        snowline_df = delineate_snowline(im_classified, site_name, aoi_utm, dem, dataset_dict, dataset, im_date,
+                                         snowline_fn, snowlines_path, figures_out_path, plot_results, im_xr,
+                                         verbose)
+        plt.close()
 
     return snowline_df
 
