@@ -444,7 +444,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
                                       region=region,
                                       scale=dataset_dict[dataset]['resolution_m'],
                                       crs='EPSG:' + epsg_utm,
-                                      dtype='float32',
+                                      dtype='int16',
                                       bands=im_composite.refl_bands)
             # load image from file
             im_da = rxr.open_rasterio(os.path.join(out_path, im_fn))
@@ -455,6 +455,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
             # account for image scalar and no data values
             im_ds = xr.where(im_ds != dataset_dict[dataset]['no_data_value'],
                              im_ds / dataset_dict[dataset]['image_scalar'], np.nan)
+            im_ds = xr.where(im_ds > 0, im_ds, np.nan)
             # add time dimension
             im_dt = np.datetime64(datetime.datetime.fromtimestamp(im_da.attrs['system-time_start'] / 1000))
             im_ds = im_ds.expand_dims({'time': [im_dt]})
@@ -478,6 +479,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
                 # account for image scalar
                 ims_xr_composite = xr.where(ims_xr_composite != dataset_dict[dataset]['no_data_value'],
                                             ims_xr_composite / dataset_dict[dataset]['image_scalar'], np.nan)
+                ims_xr_composite = xr.where(ims_xr_composite > 0, ims_xr_composite, np.nan)
                 # set CRS
                 ims_xr_composite.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
                 # append to list of xarray.Datasets
@@ -492,6 +494,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
                 # account for image scalar
                 im_xr = xr.where(im_xr != dataset_dict[dataset]['no_data_value'],
                                  im_xr / dataset_dict[dataset]['image_scalar'], np.nan)
+                im_xr = xr.where(im_xr > 0, im_xr, np.nan)
                 # set CRS
                 im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
                 # append to list of xarray.Datasets
