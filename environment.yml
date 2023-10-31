@@ -6,6 +6,7 @@ dependencies:
   - python=3.11
   - geedim=1.7.1
   - planet=2.0.1
+  - scikit-learn=1.2.2
   - geopandas
   - rioxarray
   - jupyterlab
@@ -14,5 +15,8 @@ dependencies:
   - scikit-image
   - ipywidgets
   - contextily
+  - netcdf4
+  - h5netcdf
+  - dask
   - pip:
     - wxee

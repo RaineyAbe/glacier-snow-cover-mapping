@@ -5,11 +5,13 @@
 from planet import OrdersClient, Session
 from shapely import geometry as sgeom
 from planet import order_request, reporting
-from pathlib import Path
+import glob
+import requests
+from requests.auth import HTTPBasicAuth
 
 
 def build_quick_search_request(aoi_box_shape, max_cloud_cover, start_date, end_date,
-                               item_type, asset_type):
+                               item_type, asset_type, auth):
     """
     Compile input filters to create request for Planet API Quick Search
 
@@ -21,18 +23,20 @@ def build_quick_search_request(aoi_box_shape, max_cloud_cover, start_date, end_d
     end_date
     item_type
     asset_type
+    auth
 
     Returns
     -------
-    request
+    im_ids: list[str]
+        list of image IDs resulting from Quick Search
     """
 
+    # -----Build and combine search filters
     geometry_filter = {
         "type": "GeometryFilter",
         "field_name": "geometry",
         "config": sgeom.mapping(aoi_box_shape)
     }
-
     date_range_filter = {
         "type": "DateRangeFilter",
         "field_name": "acquired",
@@ -41,7 +45,6 @@ def build_quick_search_request(aoi_box_shape, max_cloud_cover, start_date, end_d
             "lte": end_date + "T00:00:00.000Z"
         }
     }
-
     cloud_cover_filter = {
         "type": "RangeFilter",
         "field_name": "cloud_cover",
@@ -49,20 +52,69 @@ def build_quick_search_request(aoi_box_shape, max_cloud_cover, start_date, end_d
             "lte": max_cloud_cover
         }
     }
-
     combined_filter = {
         "type": "AndFilter",
         "config": [geometry_filter, date_range_filter, cloud_cover_filter]
     }
 
+    # -----Build request
     request = {
         "item_types": [item_type],
         "asset_types": [asset_type],
         "filter": combined_filter
     }
 
-    return request
+    # -----Fire off the POST request
+    qs_result = \
+        requests.post(
+            'https://api.planet.com/data/v1/quick-search',
+            auth=auth,
+            json=request)
 
+    # -----Print number of resulting image IDs
+    im_ids = [feature['id'] for feature in qs_result.json()['features']]
+    im_ids = sorted(im_ids)
+    print(len(im_ids), 'images found')
+
+    return im_ids
+
+
+def filter_image_ids(im_ids, start_month, end_month, out_path):
+    """
+    Filter list of image IDs by month range and check if files already exist in out_path
+
+    Parameters
+    ----------
+    im_ids: list[str]
+        list of image IDs
+    start_month: int
+        start month in the date range (including start_month)
+    end_month: int
+        end month in the date range (including end_month)
+    out_path
+
+    Returns
+    -------
+    im_ids_filtered: list[str]
+        list of image IDs after filtering
+    """
+    im_ids_filtered = []
+    for im_id in im_ids:
+        # don't include if image capture month is outside month range
+        im_month = int(im_id[4:6])
+        if (im_month < start_month) or (im_month > end_month):
+            continue
+        # don't include if file already exists in directory
+        if len(glob.glob(out_path + im_id + '*.tif')) == 0:
+            im_ids_filtered.append(im_id)
+    im_ids_filtered = sorted(im_ids_filtered)
+
+    # print number of resulting images and IDs
+    print('Number of new images to download = ' + str(len(im_ids_filtered)))
+    print('Image IDs:')
+    print(im_ids_filtered)
+
+    return im_ids_filtered
 
 def build_request_with_item_ids(request_name, aoi_box, clip_to_aoi, harmonize, item_ids, item_type, asset_type):
     """
