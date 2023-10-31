@@ -7,7 +7,7 @@ Department of Geosciences, Boise State University
 ## Description
 Workflow for detecting glacier snow-covered area, accumulation area ratios, and seasonal snowlines in Sentinel-2, Landsat 8/9, and PlanetScope 4-band imagery.
 
-_Basic image processing workflow:_
+__Basic image processing workflow:__
 
 <img src="https://github.com/RaineyAbe/snow-cover-mapping/blob/main/figures/methods_workflow_no_filtering.png" alt="Image processing workflow" width="600"/>
 
@@ -37,11 +37,13 @@ Rainey Aberle (raineyaberle@u.boisestate.edu)
 Below are an example time series of snow-covered area (SCA), accumulation area ratio (AAR), and median snowline elevations at South Cascade Glacier, Washington state for 2013-2022.
 
 __Classified images and seasonal snowlines__
-![](https://github.com/RaineyAbe/snow-cover-mapping/figures/SouthCascadeGlacier_results_gif/output.gif)
+![](figures/SouthCascadeGlacier_results_gif/output.gif)
 
 __Snow cover metrics time series and weekly median trends__
+
 Weekly median trends are excluding PlanetScope to mitigate noise.
-![](https://github.com/RaineyAbe/snow-cover-mapping/figures/timeseries_SouthCascadeGlacier.png)
+
+<img src='figures/timeseries_SouthCascade_Glacier.png' width='700'>
 
 ## Funding and Acknowledgements
 We would like to thank members of the [CryoGARS Glaciology](https://github.com/CryoGARS-Glaciology) lab at Boise State University and the [USGS Benchmark Glacier program](https://www.usgs.gov/programs/climate-research-and-development-program/science/usgs-benchmark-glacier-project) staff for their support and input. This work was funded by BAA-CRREL award W913E520C0017 and NASA EPSCoR award 80NSSC20M0222 and utilized data from [Planet Labs, Inc.](https://www.planet.com/) which was made available through the [NASA Commercial Smallsat Data Acquisition (CSDA) Program](https://www.earthdata.nasa.gov/esds/csda).
