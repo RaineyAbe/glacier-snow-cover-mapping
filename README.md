@@ -37,6 +37,7 @@ Rainey Aberle (raineyaberle@u.boisestate.edu)
 Below are an example time series of snow-covered area (SCA), accumulation area ratio (AAR), and median snowline elevations at South Cascade Glacier, Washington state for 2013-2022.
 
 __Classified images and seasonal snowlines__
+
 ![](figures/SouthCascadeGlacier_results_gif/output.gif)
 
 __Snow cover metrics time series and weekly median trends__
