@@ -39,7 +39,9 @@ import argparse
 import dask.bag as db
 from dask.diagnostics import ProgressBar
 import warnings
+
 warnings.simplefilter("ignore")
+
 
 def getparser():
     parser = argparse.ArgumentParser(description="snow_classification_pipeline with arguments passed by the user",
@@ -48,20 +50,23 @@ def getparser():
     parser.add_argument('-base_path', default=None, type=str, help='Path in directory to "snow-cover-mapping/"')
     parser.add_argument('-aoi_path', default=None, type=str, help='Path in directory to area of interest shapefile')
     parser.add_argument('-aoi_fn', default=None, type=str, help='Area of interest file name (.shp)')
-    parser.add_argument('-dem_path', default=None, type=str, help='(Optional) Path in directory to digital elevation model')
+    parser.add_argument('-dem_path', default=None, type=str,
+                        help='(Optional) Path in directory to digital elevation model')
     parser.add_argument('-dem_fn', default=None, type=str, help='(Optional) Digital elevation model file name (.shp)')
     parser.add_argument('-out_path', default=None, type=str, help='Path in directory where output images will be saved')
     parser.add_argument('-ps_im_path', default=None, type=str, help='Path in directory where PlanetScope raw images '
                                                                     'are located')
-    parser.add_argument('-figures_out_path', default=None, type=str, help='Path in directory where figures will be saved')
+    parser.add_argument('-figures_out_path', default=None, type=str,
+                        help='Path in directory where figures will be saved')
     parser.add_argument('-date_start', default=None, type=str, help='Start date for image querying: "YYYY-MM-DD"')
     parser.add_argument('-date_end', default=None, type=str, help='End date for image querying: "YYYY-MM-DD"')
     parser.add_argument('-month_start', default=None, type=int, help='Start month for image querying, e.g. 5')
     parser.add_argument('-month_end', default=None, type=int, help='End month for image querying, e.g. 10')
     parser.add_argument('-cloud_cover_max', default=None, type=int, help='Max. cloud cover percentage in images, '
                                                                          'e.g. 50 = 50% maximum cloud coverage')
-    parser.add_argument('-mask_clouds', default=None, type=bool, help='Whether to mask clouds using the respective cloud '
-                                                                      'cover masking product of each dataset')
+    parser.add_argument('-mask_clouds', default=None, type=bool,
+                        help='Whether to mask clouds using the respective cloud '
+                             'cover masking product of each dataset')
     parser.add_argument('-im_download', default=False, type=bool, help='Whether to download intermediary images. '
                                                                        'If im_download=False, but images over the AOI '
                                                                        'exceed the GEE limit, images must be '
@@ -73,6 +78,7 @@ def getparser():
                         help='Whether to print details for each image at each processing step.')
 
     return parser
+
 
 def main():
     # -----Set user arguments as variables
@@ -164,38 +170,22 @@ def main():
         print('Sentinel-2 TOA')
         print('----------')
 
-        # -----Query GEE for imagery (and download to s2_toa_im_path if necessary)
+        # -----Query GEE for imagery and run classification pipeline
+        # Define dataset
         dataset = 'Sentinel-2_TOA'
-        im_list = f.query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, month_start,
-                                          month_end, cloud_cover_max, mask_clouds, s2_toa_im_path, im_download)
-
-        # -----Check whether images were found
-        if type(im_list) == str:
-            print('No images found to classify, quitting...')
-        else:
-
-            # -----Load trained classifier and feature columns
-            clf_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_classifier_all_sites.joblib')
-            clf = load(clf_fn)
-            feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_feature_columns.json')
-            feature_cols = json.load(open(feature_cols_fn))
-
-            # -----Apply pipeline to list of images
-            # Convert list of images to dask bag
-            im_bag = db.from_sequence(im_list)
-            # Create processor with appropriate function arguments
-            def create_processor(im_xr):
-                snowline_df = f.apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                                              snowlines_path,
-                                                              aoi_utm, dem, epsg_utm, clf, feature_cols, crop_to_aoi,
-                                                              figures_out_path,
-                                                              plot_results, verbose)
-                return snowline_df
-            # Apply batch processing
-            with ProgressBar():
-                # prepare bag for mapping
-                im_bag_results = im_bag.map(create_processor)
-                im_bag_results.compute()
+        # Load trained image classifier
+        clf_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_classifier_all_sites.joblib')
+        clf = load(clf_fn)
+        # Load feature columns (bands to use in classification)
+        feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_feature_columns.json')
+        feature_cols = json.load(open(feature_cols_fn))
+        # Run the classification pipeline
+        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
+                                             month_end,
+                                             cloud_cover_max, mask_clouds, site_name, clf, feature_cols, s2_toa_im_path,
+                                             im_classified_path, snowlines_path, figures_out_path, crop_to_aoi,
+                                             plot_results,
+                                             verbose, im_download)
 
     # ------------------------ #
     # --- 2. Sentinel-2 SR --- #
@@ -206,38 +196,22 @@ def main():
         print('Sentinel-2 SR')
         print('----------')
 
-        # -----Query GEE for imagery and download to s2_sr_im_path if necessary
+        # -----Query GEE for imagery and run classification pipeline
+        # Define dataset
         dataset = 'Sentinel-2_SR'
-        im_list = f.query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, month_start,
-                                          month_end, cloud_cover_max, mask_clouds, s2_sr_im_path, im_download)
-
-        # -----Check whether images were found
-        if type(im_list) == str:
-            print('No images found to classify, quitting...')
-        else:
-
-            # -----Load trained classifier and feature columns
-            clf_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_SR_classifier_all_sites.joblib')
-            clf = load(clf_fn)
-            feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_SR_feature_columns.json')
-            feature_cols = json.load(open(feature_cols_fn))
-
-            # -----Apply pipeline to list of images
-            # Convert list of images to dask bag
-            im_bag = db.from_sequence(im_list)
-            # Create processor with appropriate function arguments
-            def create_processor(im_xr):
-                snowline_df = f.apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                                              snowlines_path,
-                                                              aoi_utm, dem, epsg_utm, clf, feature_cols, crop_to_aoi,
-                                                              figures_out_path,
-                                                              plot_results, verbose)
-                return snowline_df
-            # Apply batch processing
-            with ProgressBar():
-                # prepare bag for mapping
-                im_bag_results = im_bag.map(create_processor)
-                im_bag_results.compute()
+        # Load trained image classifier
+        clf_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_SR_classifier_all_sites.joblib')
+        clf = load(clf_fn)
+        # Load feature columns (bands to use in classification)
+        feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_SR_feature_columns.json')
+        feature_cols = json.load(open(feature_cols_fn))
+        # Run the classification pipeline
+        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
+                                             month_end,
+                                             cloud_cover_max, mask_clouds, site_name, clf, feature_cols, s2_sr_im_path,
+                                             im_classified_path, snowlines_path, figures_out_path, crop_to_aoi,
+                                             plot_results,
+                                             verbose, im_download)
 
     # ------------------------- #
     # --- 3. Landsat 8/9 SR --- #
@@ -249,35 +223,21 @@ def main():
         print('----------')
 
         # -----Query GEE for imagery (and download to l_im_path if necessary)
+        # Define dataset
         dataset = 'Landsat'
-        im_list = f.query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, month_start, month_end,
-                                          cloud_cover_max, mask_clouds, l_im_path, im_download)
-
-        # -----Check whether images were found
-        if type(im_list) == str:
-            print('No images found to classify, quitting...')
-        else:
-
-            # -----Load trained classifier and feature columns
-            clf_fn = os.path.join(base_path, 'inputs-outputs', 'Landsat_classifier_all_sites.joblib')
-            clf = load(clf_fn)
-            feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Landsat_feature_columns.json')
-            feature_cols = json.load(open(feature_cols_fn))
-
-            # -----Apply pipeline to list of images
-            # Convert list of images to dask bag
-            im_bag = db.from_sequence(im_list)
-            # Create processor with appropriate function arguments
-            def create_processor(im_xr):
-                snowline_df = f.apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                                              snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
-                                                              crop_to_aoi, figures_out_path, plot_results, verbose)
-                return snowline_df
-            # Apply batch processing
-            with ProgressBar():
-                # prepare bag for mapping
-                im_bag_results = im_bag.map(create_processor)
-                im_bag_results.compute()
+        # Load trained image classifier
+        clf_fn = os.path.join(base_path, 'inputs-outputs', 'Landsat_classifier_all_sites.joblib')
+        clf = load(clf_fn)
+        # Load feature columns (bands to use in classification)
+        feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Landsat_feature_columns.json')
+        feature_cols = json.load(open(feature_cols_fn))
+        # Run the classification pipeline
+        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
+                                             month_end,
+                                             cloud_cover_max, mask_clouds, site_name, clf, feature_cols, l_im_path,
+                                             im_classified_path, snowlines_path, figures_out_path, crop_to_aoi,
+                                             plot_results,
+                                             verbose, im_download)
 
     # ------------------------- #
     # --- 4. PlanetScope SR --- #
@@ -289,85 +249,93 @@ def main():
         print('----------')
 
         # -----Read surface reflectance image file names
-        if not ps_im_path:
-            print('Variable ps_im_path must be specified to run the PlanetScope classification pipeline, exiting...')
+        os.chdir(ps_im_path)
+        im_fns = sorted(glob.glob('*SR*.tif'))
+
+        # ----Mask clouds and cloud shadows in all images
+        plot_results = False
+        if mask_clouds:
+            print('Masking images using cloud bitmask...')
+            for im_fn in tqdm(im_fns):
+                f.planetscope_mask_image_pixels(ps_im_path, im_fn, ps_im_masked_path, save_outputs, plot_results)
+        # read masked image file names
+        os.chdir(ps_im_masked_path)
+        im_masked_fns = sorted(glob.glob('*_mask.tif'))
+
+        # -----Mosaic images captured within same hour
+        print('Mosaicking images captured in the same hour...')
+        if mask_clouds:
+            f.planetscope_mosaic_images_by_date(ps_im_masked_path, im_masked_fns, ps_im_mosaics_path, aoi_utm)
+            print(' ')
         else:
+            f.planetscope_mosaic_images_by_date(ps_im_path, im_fns, ps_im_mosaics_path, aoi_utm)
+            print(' ')
 
-            dataset = 'PlanetScope'
+        # -----Load trained classifier and feature columns
+        clf_fn = base_path + 'inputs-outputs/PlanetScope_classifier_all_sites.joblib'
+        clf = load(clf_fn)
+        feature_cols_fn = base_path + 'inputs-outputs/PlanetScope_feature_columns.json'
+        feature_cols = json.load(open(feature_cols_fn))
+        dataset = 'PlanetScope'
 
-            # -----Read surface reflectance image file names
-            os.chdir(ps_im_path)
-            im_fns = sorted(glob.glob('*SR*.tif'))
+        # -----Adjust image radiometry
+        # read mosaicked image file names
+        os.chdir(ps_im_mosaics_path)
+        im_mosaic_fns = sorted(glob.glob('*.tif'))
+        # create polygon(s) of the top and bottom 20th percentile elevations within the AOI
+        polygons_top, polygons_bottom = f.create_aoi_elev_polys(aoi_utm, dem)
+        # loop through images
+        for im_mosaic_fn in tqdm(im_mosaic_fns):
 
-            # ----Mask clouds and cloud shadows in all images
-            plot_results = False
-            if mask_clouds:
-                print('Masking images using cloud bitmask...')
-                for im_fn in tqdm(im_fns):
-                    f.planetscope_mask_image_pixels(ps_im_path, im_fn, ps_im_masked_path, save_outputs, plot_results)
-            # read masked image file names
-            os.chdir(ps_im_masked_path)
-            im_masked_fns = sorted(glob.glob('*_mask.tif'))
+            # -----Open image mosaic
+            im_da = xr.open_dataset(ps_im_mosaics_path + im_mosaic_fn)
+            # determine image date from image mosaic file name
+            im_date = im_mosaic_fn[0:4] + '-' + im_mosaic_fn[4:6] + '-' + im_mosaic_fn[6:8] + 'T' + im_mosaic_fn[
+                                                                                                    9:11] + ':00:00'
+            im_dt = np.datetime64(im_date)
+            if verbose:
+                print(im_date)
 
-            # -----Mosaic images captured within same hour
-            print('Mosaicking images captured in the same hour...')
-            if mask_clouds:
-                f.planetscope_mosaic_images_by_date(ps_im_masked_path, im_masked_fns, ps_im_mosaics_path, aoi_utm)
-                print(' ')
+            # -----Adjust radiometry
+            im_adj, im_adj_method = f.planetscope_adjust_image_radiometry(im_da, im_dt, polygons_top, polygons_bottom,
+                                                                          dataset_dict, skip_clipped)
+            if type(im_adj) == str:  # skip if there was an error in adjustment
+                continue
+
+            # -----Classify image
+            im_classified_fn = im_date.replace('-', '').replace(':',
+                                                                '') + '_' + site_name + '_' + dataset + '_classified.nc'
+            if os.path.exists(os.path.join(im_classified_path, im_classified_fn)):
+                if verbose:
+                    print('Classified image already exists in file, loading...')
+                im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
+                # remove no data values
+                im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
             else:
-                f.planetscope_mosaic_images_by_date(ps_im_path, im_fns, ps_im_mosaics_path, aoi_utm)
+                im_classified = f.classify_image(im_adj, clf, feature_cols, crop_to_aoi, aoi_utm, dem, dataset_dict,
+                                                 dataset, im_classified_fn, im_classified_path, verbose)
+            if type(im_classified) == str:
+                continue
+
+            # -----Delineate snowline(s)
+            # check if snowline already exists in file
+            snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
+            if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
+                if verbose:
+                    print('Snowline already exists in file, skipping...')
+            else:
+                plot_results = True
+                snowline_df = f.delineate_snowline(im_adj, im_classified, site_name, aoi_utm, dem, dataset_dict,
+                                                   dataset, im_date, snowline_fn, snowlines_path, figures_out_path,
+                                                   plot_results, verbose)
+                if verbose:
+                    print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
+            if verbose:
                 print(' ')
-
-                # -----Adjust image radiometry
-                im_adj_list = []
-                # read mosaicked image file names
-                os.chdir(ps_im_mosaics_path)
-                im_mosaic_fns = sorted(glob.glob('*.tif'))
-                # create polygon(s) of the top and bottom 20th percentile elevations within the aoi
-                polygons_top, polygons_bottom = f.create_aoi_elev_polys(aoi_utm, dem)
-                # loop through images
-                for im_mosaic_fn in tqdm(im_mosaic_fns):
-
-                    # -----Open image mosaic
-                    im_da = xr.open_dataset(ps_im_mosaics_path + im_mosaic_fn)
-                    # determine image date from image mosaic file name
-                    im_date = im_mosaic_fn[0:4] + '-' + im_mosaic_fn[4:6] + '-' + im_mosaic_fn[6:8] + 'T' + im_mosaic_fn[
-                                                                                                            9:11] + ':00:00'
-                    im_dt = np.datetime64(im_date)
-                    print(im_date)
-
-                    # -----Adjust radiometry
-                    im_adj, im_adj_method = f.planetscope_adjust_image_radiometry(im_da, im_dt, polygons_top, polygons_bottom,
-                                                                                  dataset_dict, skip_clipped)
-                    if type(im_adj) == str:  # skip if there was an error in adjustment
-                        continue
-                    else:
-                        im_adj_list.append(im_adj)
-
-                # -----Load trained classifier and feature columns
-                clf_fn = os.path.join(base_path, 'inputs-outputs', 'PlanetScope_classifier_all_sites.joblib')
-                clf = load(clf_fn)
-                feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'PlanetScope_feature_columns.json')
-                feature_cols = json.load(open(feature_cols_fn))
-
-                # -----Apply pipeline to list of images
-                # Convert list of images to dask bag
-                im_bag = db.from_sequence(im_list)
-                # Create processor with appropriate function arguments
-                def create_processor(im_xr):
-                    snowline_df = f.apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                                                  snowlines_path,
-                                                                  aoi_utm, dem, epsg_utm, clf, feature_cols, crop_to_aoi,
-                                                                  figures_out_path,
-                                                                  plot_results, verbose)
-                    return snowline_df
-                # Apply batch processing
-                with ProgressBar():
-                    # prepare bag for mapping
-                    im_bag_results = im_bag.map(create_processor)
-                    im_bag_results.compute()
+        print(' ')
 
     print('Done!')
+
 
 if __name__ == '__main__':
     main()

@@ -13,3 +13,9 @@ Inputs-outputs/*.zip
 # Scripts for running on cluster
 scripts/example_slurm_*.bash
 scripts/slurm_*.bash
+
+# Individual images for gif
+figures/SouthCascadeGlacier_results_gif/20*.png
+
+# drafts, random notebooks, etc.
+notebooks/drafts_untested/
