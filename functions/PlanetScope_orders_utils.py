@@ -7,8 +7,9 @@ from shapely import geometry as sgeom
 from planet import order_request, reporting
 import glob
 import requests
+import os
+import json
 from requests.auth import HTTPBasicAuth
-
 
 def build_quick_search_request(aoi_box_shape, max_cloud_cover, start_date, end_date,
                                item_type, asset_type, auth):
@@ -116,12 +117,14 @@ def filter_image_ids(im_ids, start_month, end_month, out_path):
 
     return im_ids_filtered
 
-def build_request_with_item_ids(request_name, aoi_box, clip_to_aoi, harmonize, item_ids, item_type, asset_type):
+def build_request_with_item_ids(base_path, request_name, aoi_box, clip_to_aoi, harmonize, item_ids, item_type, asset_type):
     """
     Build Planet API request for image orders using image IDs
 
     Parameters
     ----------
+    base_path: str
+        path in directory to snow-cover-mapping
     request_name: str
         name of the request for monitoring order status
     aoi_box: geojson
@@ -142,6 +145,21 @@ def build_request_with_item_ids(request_name, aoi_box, clip_to_aoi, harmonize, i
     request
     """
 
+    # determine "bundle" using item_type and asset_type
+    # see this page for more info: https://developers.planet.com/apis/orders/product-bundles-reference/
+    # load Planet bundles dictionary
+    bundles_dict_fn = os.path.join(base_path, 'inputs-outputs', 'Planet_bundles.json')
+    bundles_dict = json.load(open(bundles_dict_fn))
+    # grab all bundles
+    bundles = list(bundles_dict['bundles'].keys())
+    # iterate over bundles
+    for bundle in bundles:
+        items_in_bundle = list(bundles_dict['bundles'][bundle]['assets'].keys())
+        if item_type in items_in_bundle:
+            assets_in_bundle = bundles_dict['bundles'][bundle]['assets'][item_type]
+            if asset_type in assets_in_bundle:
+                bundle_type = bundle
+
     # define the tools
     clip_tool = order_request.clip_tool(aoi_box)
     harmonize_tool = order_request.harmonize_tool("Sentinel-2")
@@ -154,7 +172,7 @@ def build_request_with_item_ids(request_name, aoi_box, clip_to_aoi, harmonize, i
         tools.append(harmonize_tool)
 
     # define products to download
-    products = [order_request.product(item_ids, asset_type, item_type)]
+    products = [order_request.product(item_ids, bundle_type, item_type)]
 
     # build request
     request = order_request.build_request(request_name, products=products, tools=tools)
