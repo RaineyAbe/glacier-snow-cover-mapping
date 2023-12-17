@@ -1,35 +1,35 @@
-# Installation for `snow-cover-mapping`
+# Installation for `glacier-snow-cover-mapping`
 
 ### Optional: Fork repository for personal use
-To save a copy of the code for personal use, fork the `snow-cover-mapping` code repository to your personal GitHub account. See [this page](https://docs.github.com/en/get-started/quickstart/fork-a-repo) for instructions on how to fork a GitHub repository.
+To save a copy of the code for personal use, fork the `glacier-snow-cover-mapping` code repository to your personal GitHub account. See [this page](https://docs.github.com/en/get-started/quickstart/fork-a-repo) for instructions on how to fork a GitHub repository.
 
 ### 1. Clone code repository
-To clone the `snow-cover-mapping` repository into your local directory, open a new Terminal window and change directory (`cd`) to where you want it to be stored (which is referred to as the `base_path` in the code). Then, execute the following command:
+To clone the `glacier-snow-cover-mapping` repository into your local directory, open a new Terminal window and change directory (`cd`) to where you want it to be stored (which is referred to as the `base_path` in the code). Then, execute the following command:
 
-`git clone https://github.com/RaineyAbe/snow-cover-mapping.git`
+`git clone https://github.com/RaineyAbe/glacier-snow-cover-mapping.git`
 
 If you forked the code repository to your personal Git account, replace `RaineyAbe` with `YourUserName` in the command above.
 
-### 2. Download Miniconda or Anaconda
-For packaging and managing all of the required Python packages, I recommend downloading either [Miniconda or Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html). This will enable you to install the environment directly using the .yml file below. See [this helpful guide](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) for getting started with Conda if you are unfamiliar.
+### 2. Download Conda or Mamba
+For packaging and managing all of the required Python packages, I recommend downloading either [Miniconda, Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html) or [Mamba](https://mamba.readthedocs.io/en/latest/index.html). This will enable you to install the environment directly using the .yml file below. See [this helpful guide](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) for getting started with Conda if you are unfamiliar.
 
-### 3. Create Conda environment from .yml file
-To ensure all required packages for the notebooks/scripts are installed, I recommend creating a conda environment using the `environment.yml` file provided by executing the following command:
+### 3. Create environment from .yml file
+To ensure all required packages for the notebooks/scripts are installed, I recommend creating a conda/mamba environment using the `environment.yml` file provided by executing the following command:
 
 `conda env create -f environment.yml`
 
 [Here is a helpful resource](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-from-an-environment-yml-file) for working with Conda environments.
 
-### 4. Activate Conda environment
-To activate the Conda environment, execute the following command:
+### 4. Activate environment
+To activate the environment, execute the following command:
 
-`conda activate snow-cover-mapping`
+`conda activate glacier-snow-cover-mapping`
 
-### 5. Add Conda environment as an ipykernel
+### 5. Add environment as an ipykernel
 
-Now, run the following command so that you can use the `snow-cover-mapping` environment in Jupyter Notebook/Lab:
+Now, run the following command so that you can use the `glacier-snow-cover-mapping` environment in Jupyter Notebook/Lab:
 
-`python -m ipykernel install --user --name=snow-cover-mapping`
+`python -m ipykernel install --user --name=glacier-snow-cover-mapping`
 
 ## Recommended directory structure
 The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below. Otherwise, you can modify the file paths and names in the first section of each notebook/script.
@@ -68,10 +68,10 @@ _After running the snow classification workflow:_ Includes directories that are 
     │   │   │   │   ├── Sentinel-2_SR   # Where Sentinel-2 surface reflectance image downloads will be saved if site area is larger than GEE limit
     │   │   │   │   ├── Sentinel-2_TOA  # Where Sentinel-2 top of atmosphere reflectance image downloads will be saved if site area is larger than GEE limit
     │   │   │   │   ├── classified      # Where all classified images will be saved
-    │   │   │   │   └── snowlines       # Where all snowline and ELA estimates will be saved
+    │   │   │   │   └── snowlines       # Where all snowline and snow cover statistics CSVs will be saved
     │   │   │   ├── AOIs                # Folder containing outline of the Area of Interest (AOI), shapefile
     │   │   │   ├── DEMs                # Folder containing digital elevation model of the AOI (optional)
-    │   │   │   └── figures             # Where figures/images will be saved
+    │   │   │   └── figures             # Where figures will be saved
     │   │   └── ...
     │   └── ...
     └── ...
