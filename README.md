@@ -1,4 +1,4 @@
-# snow-cover-mapping
+# glacier-snow-cover-mapping
 
 Rainey Aberle, Ellyn Enderlin, HP Marshall, Shad O'Neel, & Alejandro Flores
 
