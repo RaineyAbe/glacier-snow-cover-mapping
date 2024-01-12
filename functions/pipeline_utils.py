@@ -76,7 +76,7 @@ def plot_xr_rgb_image(im_xr, rgb_bands):
     """
 
     # -----Grab RGB bands from dataset
-    if len(np.shape(im_xr[rgb_bands[0]].data)) > 2:  # check if need to take [0] of data
+    if len(np.shape(im_xr[rgb_bands[0]].data)) > 2:  # check if a dimension must be cut from the band data
         red = im_xr[rgb_bands[0]].data[0]
         blue = im_xr[rgb_bands[1]].data[0]
         green = im_xr[rgb_bands[2]].data[0]
@@ -106,6 +106,15 @@ def plot_xr_rgb_image(im_xr, rgb_bands):
 
 
 # --------------------------------------------------
+def adjust_dem_data_vars(dem):
+    if 'band_data' in dem.data_vars:
+        dem = dem.rename({'band_data': 'elevation'})
+    if 'band' in dem.dims:
+        elev_data = dem.elevation.data[0]
+        dem = dem.drop_dims('band')
+        dem['elevation'] = (('y', 'x'), elev_data)
+    return dem
+
 def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     """
     Query GEE for the ArcticDEM Mosaic (where there is coverage) or the NASADEM,
@@ -131,16 +140,7 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     # -----Grab optimal UTM zone from AOI CRS
     epsg_utm = str(aoi_utm.crs.to_epsg())
 
-    # -----Define some functions
-    def adjust_data_vars(im_xr):
-        if 'band_data' in im_xr.data_vars:
-            im_xr = im_xr.rename({'band_data': 'elevation'})
-        if 'band' in im_xr.dims:
-            elev_data = im_xr.elevation.data[0]
-            im_xr = im_xr.drop_dims('band')
-            im_xr['elevation'] = (('y', 'x'), elev_data)
-        return im_xr
-
+    # -----Define function to transform ellipsoid to geoid heights
     def ellipsoid_to_geoid_heights(ds, base_path, out_path, out_fn):
         print('Transforming elevations from the ellipsoid to the geoid...')
 
@@ -168,17 +168,17 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     if os.path.exists(os.path.join(out_path, arcticdem_geoid_fn)):
         print('Clipped ArcticDEM referenced to the geoid already exists in directory, loading...')
         dem_ds = xr.open_dataset(os.path.join(out_path, arcticdem_geoid_fn))
-        dem_ds = adjust_data_vars(dem_ds)
+        dem_ds = adjust_dem_data_vars(dem_ds)
     elif os.path.exists(os.path.join(out_path, arcticdem_fn)):
         print('Clipped ArcticDEM already exists in directory, loading...')
         dem_ds = xr.open_dataset(os.path.join(out_path, arcticdem_fn))
-        dem_ds = adjust_data_vars(dem_ds)
+        dem_ds = adjust_dem_data_vars(dem_ds)
         # transform elevations from ellipsoid to geoid, save to file
         dem_ds = ellipsoid_to_geoid_heights(dem_ds, base_path, out_path, arcticdem_geoid_fn)
     elif os.path.exists(os.path.join(out_path, nasadem_fn)):
         print('Clipped NASADEM already exists in directory, loading...')
         dem_ds = xr.open_dataset(os.path.join(out_path, nasadem_fn))
-        dem_ds = adjust_data_vars(dem_ds)
+        dem_ds = adjust_dem_data_vars(dem_ds)
     else:  # if no DEM exists in directory, load from GEE
 
         # -----Reformat AOI for clipping DEM
@@ -226,7 +226,7 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
         dem.download(out_path + dem_fn, region=region, scale=res, crs="EPSG:4326")
         # read DEM as xarray.Dataset
         dem_ds = xr.open_dataset(out_path + dem_fn)
-        dem_ds = adjust_data_vars(dem_ds)
+        dem_ds = adjust_dem_data_vars(dem_ds)
 
         # -----If using ArcticDEM, transform elevations with respect to the geoid (rather than the ellipsoid)
         if 'ArcticDEM' in elevation_source:
@@ -241,8 +241,7 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
 
 
 # --------------------------------------------------
-def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dataset_dict, dataset, im_classified_fn, out_path,
-                   verbose=False):
+def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_classified_fn, out_path, verbose=False):
     """
     Function to classify image collection using a pre-trained classifier
 
@@ -254,8 +253,6 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dataset_dict, dat
         previously trained SciKit Learn Classifier
     feature_cols: array of pandas.DataFrame columns, e.g. ['blue', 'green', 'red']
         features used by classifier
-    crop_to_aoi: bool
-        whether to mask everywhere outside the AOI before classifying
     aoi: geopandas.geodataframe.GeoDataFrame
         cropping region - everything outside the AOI will be masked if crop_to_AOI==True.
         AOI must be in the same coordinate reference system as the image.
@@ -289,10 +286,17 @@ def classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi, dataset_dict, dat
     im_date = np.datetime64(str(im_xr.time.data[0])[0:19], 'ns')
 
     # -----Crop image to the AOI and remove time dimension
-    if crop_to_aoi:
-        im_aoi = im_xr.rio.clip(aoi.geometry, im_xr.rio.crs).isel(time=0)
-    else:
-        im_aoi = im_xr.isel(time=0)
+    # Create dummy band for AOI masking comparison
+    im_xr['aoi_mask'] = (['y', 'x'], np.ones(np.shape(im_xr[dataset_dict[dataset]['RGB_bands'][0]].data[0])))
+    im_aoi = im_xr.rio.clip(aoi.geometry, im_xr.rio.crs).isel(time=0)
+
+    # -----Check that the image has 70% real values in the AOI
+    perc_real_values_aoi = (len(np.ravel(~np.isnan(im_aoi[dataset_dict[dataset]['RGB_bands'][0]].data)))
+                            / len(np.ravel(~np.isnan(im_aoi['aoi_mask'].data))))
+    if perc_real_values_aoi < 0.7:
+        if verbose:
+            print('Less than 70% coverage of the AOI, skipping image...')
+        return 'N/A'
 
     # -----Prepare image for classification
     # find indices of real numbers (no NaNs allowed in classification)
@@ -430,6 +434,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
 
     # -----Clip DEM to AOI and interpolate to classified image coordinates
     dem_aoi = dem.rio.clip(aoi.geometry, aoi.crs)
+    dem_aoi = xr.where(dem_aoi < 3e38, dem_aoi, np.nan)
     dem_aoi_interp = dem_aoi.interp(x=im_classified.x.data, y=im_classified.y.data, method='linear')
     # add elevation as a band to classified image for convenience
     im_classified['elevation'] = (('y', 'x'), dem_aoi_interp.elevation.data)
@@ -614,7 +619,8 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
             ax[0].imshow(np.dstack([im_xr[dataset_dict[dataset]['RGB_bands'][0]].values,
                                     im_xr[dataset_dict[dataset]['RGB_bands'][1]].values,
                                     im_xr[dataset_dict[dataset]['RGB_bands'][2]].values]),
-                         extent=(xmin, xmax, ymin, ymax))
+                         extent=(np.min(im_xr.x.data) / 1e3, np.max(im_xr.x.data) / 1e3,
+                                 np.min(im_xr.y.data) / 1e3, np.max(im_xr.y.data) / 1e3))
         # classified image
         ax[1].imshow(im_classified['classified'].data, cmap=cmp, clim=(1, 5),
                      extent=(np.min(im_classified.x.data) / 1e3, np.max(im_classified.x.data) / 1e3,
@@ -670,8 +676,8 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
         # determine figure title and file name
         title = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snow-cover'
         # add legends
-        ax[0].legend(loc='best')
-        ax[1].legend(loc='best')
+        ax[0].legend(loc='lower right')
+        ax[1].legend(loc='lower right')
         ax[2].legend(loc='lower right')
         fig.suptitle(title)
         fig.tight_layout()
@@ -686,7 +692,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
 
 # --------------------------------------------------
 def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path, snowlines_path,
-                                  aoi_utm, dem, epsg_utm, clf, feature_cols, crop_to_aoi, figures_out_path,
+                                  aoi_utm, dem, epsg_utm, clf, feature_cols, figures_out_path,
                                   plot_results, verbose):
     """
     Apply the classification and snow delineation pipeline to an image. Batch apply using Dask.
@@ -715,8 +721,6 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
         image classsifier
     feature_cols: list of str
         list of bands to use to classify image
-    crop_to_aoi: bool
-        whether to crop images to AOI before classifying image
     figures_out_path: str
         path in directory where figures will be saved
     plot_results: bool
@@ -754,7 +758,7 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
         im_classified = im_classified.rio.write_crs('EPSG:4326').rio.reproject('EPSG:' + epsg_utm)
     else:
         # classify image
-        im_classified = classify_image(im_xr, clf, feature_cols, crop_to_aoi, aoi_utm,
+        im_classified = classify_image(im_xr, clf, feature_cols, aoi_utm,
                                        dataset_dict, dataset, im_classified_fn, im_classified_path, verbose)
         if type(im_classified) == str:  # skip if error in classification
             return
@@ -778,7 +782,7 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
 def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end,
                                        month_start, month_end, cloud_cover_max, mask_clouds, site_name, clf,
                                        feature_cols, im_out_path=None, im_classified_path=None, snowlines_path=None,
-                                       figures_out_path=None, crop_to_aoi=True, plot_results=True, verbose=False,
+                                       figures_out_path=None, plot_results=True, verbose=False,
                                        im_download=False):
     """
     Query Google Earth Engine for Landsat 8 and 9 surface reflectance (SR), Sentinel-2 top of atmosphere (TOA) or SR imagery.
@@ -793,7 +797,6 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
     aoi_utm: geopandas.geodataframe.GeoDataFrame
         area of interest used for searching and clipping images
     dem: xarray.Dataset
-
     date_start: str
         start date for image search ('YYYY-MM-DD')
     date_end: str
@@ -849,52 +852,60 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                                [aoi_wgs.geometry.bounds.minx[0], aoi_wgs.geometry.bounds.miny[0]]
                                ]]}
 
-    # -----Query GEE for imagery
-    print('Querying GEE for ' + dataset + ' imagery...')
-    if dataset == 'Landsat':
-        # Landsat 8
-        im_col_gd_8 = gd.MaskedCollection.from_name('LANDSAT/LC08/C02/T1_L2').search(start_date=date_start,
-                                                                                     end_date=date_end,
-                                                                                     region=region,
-                                                                                     cloudless_portion=100 - cloud_cover_max,
-                                                                                     mask=mask_clouds,
-                                                                                     fill_portion=70)
-        # Landsat 9
-        im_col_gd_9 = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
-                                                                                     end_date=date_end,
-                                                                                     region=region,
-                                                                                     cloudless_portion=100 - cloud_cover_max,
-                                                                                     mask=mask_clouds,
-                                                                                     fill_portion=70)
-    elif dataset == 'Sentinel-2_TOA':
-        im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
-                                                                                     end_date=date_end,
-                                                                                     region=region,
-                                                                                     cloudless_portion=100 - cloud_cover_max,
-                                                                                     mask=mask_clouds,
-                                                                                     fill_portion=70)
-    elif dataset == 'Sentinel-2_SR':
-        im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
-                                                                                        end_date=date_end,
-                                                                                        region=region,
-                                                                                        cloudless_portion=100 - cloud_cover_max,
-                                                                                        mask=mask_clouds,
-                                                                                        fill_portion=70)
-    else:
-        print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
-              "Exiting...")
-        return 'N/A'
+    # -----Define function to query GEE for imagery
+    def query_gee(dataset, date_start, date_end, region, cloud_cover_max, mask_clouds):
+        if dataset == 'Landsat8':
+            # Landsat 8
+            im_col_gd = gd.MaskedCollection.from_name('LANDSAT/LC08/C02/T1_L2').search(start_date=date_start,
+                                                                                       end_date=date_end,
+                                                                                       region=region,
+                                                                                       cloudless_portion=100 - cloud_cover_max,
+                                                                                       mask=mask_clouds,
+                                                                                       fill_portion=70)
+        elif dataset == 'Landsat9':
+            # Landsat 9
+            im_col_gd = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
+                                                                                       end_date=date_end,
+                                                                                       region=region,
+                                                                                       cloudless_portion=100 - cloud_cover_max,
+                                                                                       mask=mask_clouds,
+                                                                                       fill_portion=70)
+        elif dataset == 'Sentinel-2_TOA':
+            im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
+                                                                                         end_date=date_end,
+                                                                                         region=region,
+                                                                                         cloudless_portion=100 - cloud_cover_max,
+                                                                                         mask=mask_clouds,
+                                                                                         fill_portion=70)
+        elif dataset == 'Sentinel-2_SR':
+            im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
+                                                                                            end_date=date_end,
+                                                                                            region=region,
+                                                                                            cloudless_portion=100 - cloud_cover_max,
+                                                                                            mask=mask_clouds,
+                                                                                            fill_portion=70)
+        else:
+            print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
+                  "Exiting...")
+            return 'N/A'
 
-    # -----Create list of image IDs to download, include those that will be composited
-    # define function to create list of IDs to be mosaicked
-    def image_mosaic_ids(im_col_gd):
-        # create lists of image properties
-        try:
-            properties = im_col_gd.properties
-        except Exception as e:
-            exc_id = str(e).split('ID=')[1].split(')')[0]
-            print('Error accessing image ID: ' + exc_id + '. Exiting...')
+        return im_col_gd
+
+    # -----Define function to filter image IDs by month range
+    def filter_im_ids_month_range(im_ids, im_dts, month_start, month_end):
+        i = [int(ii) for ii in np.arange(0, len(im_dts)) if
+             (im_dts[ii].month >= month_start) and (im_dts[ii].month <= month_end)]  # indices of images to keep
+        im_ids, im_dts = [im_ids[ii] for ii in i], [im_dts[ii] for ii in i]  # subset of image IDs and datetimes
+        # return 'N/A' if no images remain after filtering by month range
+        if len(im_dts) < 1:
             return 'N/A', 'N/A'
+        return im_ids, im_dts
+
+    # -----Define function to couple image IDs captured within the same hour for mosaicking
+    def image_mosaic_ids(im_col_gd):
+
+        # Grab image properties, IDs, and datetimes from image collection
+        properties = im_col_gd.properties
         ims = dict(properties).keys()
         im_ids = [properties[im]['system:id'] for im in ims]
         # return if no images found
@@ -902,32 +913,82 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
             return 'N/A', 'N/A'
         im_dts = np.array(
             [datetime.datetime.utcfromtimestamp(properties[im]['system:time_start'] / 1000) for im in ims])
-        # remove image datetimes and IDs outside the specified month range
-        i = [int(ii) for ii in np.arange(0, len(im_dts)) if
-             (im_dts[ii].month >= month_start) and (im_dts[ii].month <= month_end)]  # indices of images to keep
-        im_dts, im_ids = [im_dts[ii] for ii in i], [im_ids[ii] for ii in i]  # subset of image datetimes and IDs
-        # return if no images remain after filtering by month range
-        if len(im_dts) < 1:
-            return 'N/A', 'N/A'
-        # grab all unique hours in image datetimes
+
+        # Remove image datetimes and IDs outside the specified month range
+        im_ids, im_dts = filter_im_ids_month_range(im_ids, im_dts, month_start, month_end)
+
+        # Grab all unique hours in image datetimes
         hours = np.array(im_dts, dtype='datetime64[h]')
         unique_hours = sorted(set(hours))
-        # create list of IDs for each unique hour
-        im_ids_list, im_dts_list = [], []
+
+        # Create list of IDs for each unique hour
+        im_mosaic_ids_list, im_mosaic_dts_list = [], []
         for unique_hour in unique_hours:
             i = list(np.ravel(np.argwhere(hours == unique_hour)))
             im_ids_list_hour = [im_ids[ii] for ii in i]
-            im_ids_list.append(im_ids_list_hour)
+            im_mosaic_ids_list.append(im_ids_list_hour)
             im_dts_list_hour = [im_dts[ii] for ii in i]
-            im_dts_list.append(im_dts_list_hour)
+            im_mosaic_dts_list.append(im_dts_list_hour)
 
-        return im_ids_list, im_dts_list
+        return im_mosaic_ids_list, im_mosaic_dts_list
 
-    # extract list of IDs to be mosaicked
-    if dataset == 'Landsat':  # must run for Landsat 8 and 9 separately
-        im_ids_list_8, im_dts_list_8 = image_mosaic_ids(im_col_gd_8)
-        im_ids_list_9, im_dts_list_9 = image_mosaic_ids(im_col_gd_9)
-        # check which collections found images
+    # -----Define function for extracting valid image IDs
+    def extract_valid_image_ids(ds, date_start, date_end, region, cloud_cover_max, mask_clouds):
+        # Initialize list of date ranges for querying
+        date_ranges = [(date_start, date_end)]
+        # Initialize list of error dates
+        error_dates = []
+        # Initialize error flag
+        error_occurred = True
+        # Iterate until no errors occur
+        while error_occurred:
+            error_occurred = False  # Reset the error flag at the beginning of each iteration
+            try:
+                # Initialize list of image collections
+                im_col_gd_list = []
+                # Iterate over date ranges
+                for date_range in date_ranges:
+                    # Query GEE for imagery
+                    im_col_gd = query_gee(ds, date_range[0], date_range[1], region, cloud_cover_max, mask_clouds)
+                    properties = im_col_gd.properties  # Error will occur here if an image is inaccessible!
+                    im_col_gd_list.append(im_col_gd)
+                # Initialize list of filtered image IDs and datetimes
+                im_mosaic_ids_list_full, im_mosaic_dts_list_full = [], []  # Initialize lists of
+                # Filter image IDs for month range and couple IDs for mosaicking
+                for im_col_gd in im_col_gd_list:
+                    im_mosaic_ids_list, im_mosaic_dts_list = image_mosaic_ids(im_col_gd)
+                    if type(im_mosaic_ids_list) is str:
+                        return 'N/A', 'N/A'
+                    # append to list
+                    im_mosaic_ids_list_full = im_mosaic_ids_list_full + im_mosaic_ids_list
+                    im_mosaic_dts_list_full = im_mosaic_dts_list_full + im_mosaic_dts_list
+
+                return im_mosaic_ids_list_full, im_mosaic_dts_list_full
+
+            except Exception as e:
+                error_id = str(e).split('ID=')[1].split(')')[0]
+                print(f"Error querying GEE for {str(error_id)}")
+
+                # Parse the error date from the exception message (replace this with your actual parsing logic)
+                error_date = datetime.datetime.strptime(error_id[0:8], '%Y%m%d')
+                error_dates.append(error_date)
+
+                # Update date ranges excluding the problematic date
+                date_starts = [date_start] + [str(error_date + datetime.timedelta(days=1))[0:10] for error_date in
+                                              error_dates]
+                date_ends = [str(error_date - datetime.timedelta(days=1))[0:10] for error_date in error_dates] + [
+                    date_end]
+                date_ranges = list(zip(date_starts, date_ends))
+
+                # Set the error flag to indicate that an error occurred
+                error_occurred = True
+
+    # -----Apply functions
+    if dataset == 'Landsat':  # must run Landsat 8 and 9 separately
+        im_ids_list_8, im_dts_list_8 = extract_valid_image_ids('Landsat8', date_start, date_end, region,
+                                                               cloud_cover_max, mask_clouds)
+        im_ids_list_9, im_dts_list_9 = extract_valid_image_ids('Landsat9', date_start, date_end, region,
+                                                               cloud_cover_max, mask_clouds)
         if (type(im_ids_list_8) is str) and (type(im_ids_list_9) is str):
             im_ids_list, im_dts_list = 'N/A', 'N/A'
         elif type(im_ids_list_9) is str:
@@ -938,8 +999,10 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
             im_ids_list = im_ids_list_8 + im_ids_list_9
             im_dts_list = im_dts_list_8 + im_dts_list_9
     else:
-        im_ids_list, im_dts_list = image_mosaic_ids(im_col_gd)
-    # check if any images were found after filtering by month and determine mosaic IDs
+        im_ids_list, im_dts_list = extract_valid_image_ids(dataset, date_start, date_end, region, cloud_cover_max,
+                                                           mask_clouds)
+
+    # -----Check if any images were found after filtering
     if type(im_ids_list) is str:
         print('No images found or error in one or more image IDs, exiting...')
         return 'N/A'
@@ -961,7 +1024,6 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
         return 'N/A'
 
     # -----Create list of xarray.Datasets from list of image IDs
-    im_xr_list = []  # initialize list of xarray.Datasets
     # loop through image IDs
     for i in tqdm(range(0, len(im_ids_list))):
 
@@ -976,7 +1038,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 os.mkdir(im_out_path)
                 print('Made directory for image downloads: ' + im_out_path)
             # define filename
-            if len(im_ids) > 1:
+            if len(im_dts) > 1:
                 im_fn = dataset + '_' + str(im_dts[0]).replace('-', '')[0:8] + '_MOSAIC.tif'
             else:
                 im_fn = dataset + '_' + str(im_dts[0]).replace('-', '')[0:8] + '.tif'
@@ -993,7 +1055,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 # download to file
                 im_composite.download(os.path.join(im_out_path, im_fn),
                                       region=region,
-                                      scale=dataset_dict[dataset]['resolution_m'],
+                                      scale=res,
                                       crs='EPSG:' + epsg_utm,
                                       dtype='int16',
                                       bands=im_composite.refl_bands)
@@ -1016,9 +1078,10 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
             # -----Run classification pipeline
             apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
                                           snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
-                                          crop_to_aoi, figures_out_path, plot_results, verbose)
+                                          figures_out_path, plot_results, verbose)
 
-        else:  # if no image downloads necessary, use wxee
+        # if no image downloads necessary, use wxee
+        else:
 
             # if more than one ID, composite images
             if len(im_dts) > 1:
@@ -1036,8 +1099,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 ims_xr_composite = xr.where(ims_xr_composite > 0, ims_xr_composite, np.nan)
                 # set CRS
                 ims_xr_composite.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
-                # append to list of xarray.Datasets
-                im_xr_list.append(ims_xr_composite)
+                im_xr = ims_xr_composite
             else:
                 # create MaskedImage from ID
                 im_gd = gd.MaskedImage.from_id(im_ids[0], mask=mask_clouds, region=region)
@@ -1052,10 +1114,10 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 # set CRS
                 im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
 
-                # -----Run classification pipeline
-                apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                              snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
-                                              crop_to_aoi, figures_out_path, plot_results, verbose)
+            # -----Run classification pipeline
+            apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
+                                          snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
+                                          figures_out_path, plot_results, verbose)
 
     return
 
@@ -1114,85 +1176,147 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                                [aoi_wgs.geometry.bounds.minx[0], aoi_wgs.geometry.bounds.miny[0]]
                                ]]}
 
-    # -----Query GEE for imagery
-    print('Querying GEE for ' + dataset + ' imagery...')
-    if dataset == 'Landsat':
-        # Landsat 8
-        im_col_gd_8 = gd.MaskedCollection.from_name('LANDSAT/LC08/C02/T1_L2').search(start_date=date_start,
-                                                                                     end_date=date_end,
-                                                                                     region=region,
-                                                                                     cloudless_portion=100 - cloud_cover_max,
-                                                                                     mask=mask_clouds,
-                                                                                     fill_portion=70)
-        # Landsat 9
-        im_col_gd_9 = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
-                                                                                     end_date=date_end,
-                                                                                     region=region,
-                                                                                     cloudless_portion=100 - cloud_cover_max,
-                                                                                     mask=mask_clouds,
-                                                                                     fill_portion=70)
-    elif dataset == 'Sentinel-2_TOA':
-        im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
-                                                                                     end_date=date_end,
-                                                                                     region=region,
-                                                                                     cloudless_portion=100 - cloud_cover_max,
-                                                                                     mask=mask_clouds,
-                                                                                     fill_portion=70)
-    elif dataset == 'Sentinel-2_SR':
-        im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
-                                                                                        end_date=date_end,
-                                                                                        region=region,
-                                                                                        cloudless_portion=100 - cloud_cover_max,
-                                                                                        mask=mask_clouds,
-                                                                                        fill_portion=70)
-    else:
-        print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
-              "Exiting...")
-        return 'N/A'
+    # -----Define function to query GEE for imagery
+    def query_gee(dataset, date_start, date_end, region, cloud_cover_max, mask_clouds):
+        if dataset == 'Landsat8':
+            # Landsat 8
+            im_col_gd = gd.MaskedCollection.from_name('LANDSAT/LC08/C02/T1_L2').search(start_date=date_start,
+                                                                                       end_date=date_end,
+                                                                                       region=region,
+                                                                                       cloudless_portion=100 - cloud_cover_max,
+                                                                                       mask=mask_clouds,
+                                                                                       fill_portion=70)
+        elif dataset == 'Landsat9':
+            # Landsat 9
+            im_col_gd = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
+                                                                                       end_date=date_end,
+                                                                                       region=region,
+                                                                                       cloudless_portion=100 - cloud_cover_max,
+                                                                                       mask=mask_clouds,
+                                                                                       fill_portion=70)
+        elif dataset == 'Sentinel-2_TOA':
+            im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
+                                                                                         end_date=date_end,
+                                                                                         region=region,
+                                                                                         cloudless_portion=100 - cloud_cover_max,
+                                                                                         mask=mask_clouds,
+                                                                                         fill_portion=70)
+        elif dataset == 'Sentinel-2_SR':
+            im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
+                                                                                            end_date=date_end,
+                                                                                            region=region,
+                                                                                            cloudless_portion=100 - cloud_cover_max,
+                                                                                            mask=mask_clouds,
+                                                                                            fill_portion=70)
+        else:
+            print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
+                  "Exiting...")
+            return 'N/A'
 
-    # -----Create list of image IDs to download, include those that will be composited
-    # define function to create list of IDs to be mosaicked
-    def image_mosaic_ids(im_col_gd):
-        # create lists of image properties
-        try:
-            properties = im_col_gd.properties
-        except Exception as e:
-            exc_id = str(e).split('ID=')[1].split(')')[0]
-            print('Error accessing image ID: ' + exc_id + '. Exiting...')
+        return im_col_gd
+
+    # -----Define function to filter image IDs by month range
+    def filter_im_ids_month_range(im_ids, im_dts, month_start, month_end):
+        i = [int(ii) for ii in np.arange(0, len(im_dts)) if
+             (im_dts[ii].month >= month_start) and (im_dts[ii].month <= month_end)]  # indices of images to keep
+        im_ids, im_dts = [im_ids[ii] for ii in i], [im_dts[ii] for ii in i]  # subset of image IDs and datetimes
+        # return 'N/A' if no images remain after filtering by month range
+        if len(im_dts) < 1:
             return 'N/A', 'N/A'
+        return im_ids, im_dts
+
+    # -----Define function to couple image IDs captured within the same hour for mosaicking
+    def image_mosaic_ids(im_col_gd):
+
+        # Grab image properties, IDs, and datetimes from image collection
+        properties = im_col_gd.properties
         ims = dict(properties).keys()
         im_ids = [properties[im]['system:id'] for im in ims]
         # return if no images found
         if len(im_ids) < 1:
             return 'N/A', 'N/A'
-        im_dts = np.array(
-            [datetime.datetime.utcfromtimestamp(properties[im]['system:time_start'] / 1000) for im in ims])
-        # remove image datetimes and IDs outside the specified month range
-        i = [int(ii) for ii in np.arange(0, len(im_dts)) if
-             (im_dts[ii].month >= month_start) and (im_dts[ii].month <= month_end)]  # indices of images to keep
-        im_dts, im_ids = [im_dts[ii] for ii in i], [im_ids[ii] for ii in i]  # subset of image datetimes and IDs
-        # return if no images remain after filtering by month range
-        if len(im_dts) < 1:
-            return 'N/A', 'N/A'
-        # grab all unique hours in image datetimes
+        im_dts = [datetime.datetime.utcfromtimestamp(properties[im]['system:time_start'] / 1000) for im in ims]
+
+        # Remove image datetimes and IDs outside the specified month range
+        im_ids, im_dts = filter_im_ids_month_range(im_ids, im_dts, month_start, month_end)
+
+        # Initialize list of image ids and datetimes to mosaic
+        im_mosaic_ids_list_full, im_mosaic_dts_list_full = [], []
+
+        # Grab all unique hours in image datetimes
         hours = np.array(im_dts, dtype='datetime64[h]')
         unique_hours = sorted(set(hours))
-        # create list of IDs for each unique hour
+
+        # Create list of IDs for each unique hour
         im_ids_list, im_dts_list = [], []
         for unique_hour in unique_hours:
             i = list(np.ravel(np.argwhere(hours == unique_hour)))
             im_ids_list_hour = [im_ids[ii] for ii in i]
-            im_ids_list.append(im_ids_list_hour)
+            im_ids_list = im_ids_list + [im_ids_list_hour]
             im_dts_list_hour = [im_dts[ii] for ii in i]
-            im_dts_list.append(im_dts_list_hour)
+            im_dts_list = im_dts_list + [im_dts_list_hour]
+        im_mosaic_ids_list_full = im_mosaic_ids_list_full + im_ids_list
+        im_mosaic_dts_list_full = im_mosaic_dts_list_full + im_dts_list
 
-        return im_ids_list, im_dts_list
+        return im_mosaic_ids_list_full, im_mosaic_dts_list_full
 
-    # extract list of IDs to be mosaicked
-    if dataset == 'Landsat':  # must run for Landsat 8 and 9 separately
-        im_ids_list_8, im_dts_list_8 = image_mosaic_ids(im_col_gd_8)
-        im_ids_list_9, im_dts_list_9 = image_mosaic_ids(im_col_gd_9)
-        # check which collections found images
+    # -----Define function for extracting valid image IDs
+    def extract_valid_image_ids(ds, date_start, date_end, region, cloud_cover_max, mask_clouds):
+        # Initialize list of date ranges for querying
+        date_ranges = [(date_start, date_end)]
+        # Initialize list of error dates
+        error_dates = []
+        # Initialize error flag
+        error_occurred = True
+        # Iterate until no errors occur
+        while error_occurred:
+            error_occurred = False  # Reset the error flag at the beginning of each iteration
+            try:
+                # Initialize list of image collections
+                im_col_gd_list = []
+                # Iterate over date ranges
+                for date_range in date_ranges:
+                    # Query GEE for imagery
+                    im_col_gd = query_gee(ds, date_range[0], date_range[1], region, cloud_cover_max, mask_clouds)
+                    properties = im_col_gd.properties  # Error will occur here if an image is inaccessible!
+                    im_col_gd_list.append(im_col_gd)
+                # Initialize list of filtered image IDs and datetimes
+                im_mosaic_ids_list_full, im_mosaic_dts_list_full = [], []  # Initialize lists of
+                # Filter image IDs for month range and couple IDs for mosaicking
+                for im_col_gd in im_col_gd_list:
+                    im_mosaic_ids_list, im_mosaic_dts_list = image_mosaic_ids(im_col_gd)
+                    if type(im_mosaic_ids_list) is str:
+                        return 'N/A', 'N/A'
+                    # append to list
+                    im_mosaic_ids_list_full = im_mosaic_ids_list_full + im_mosaic_ids_list
+                    im_mosaic_dts_list_full = im_mosaic_dts_list_full + im_mosaic_dts_list
+
+                return im_mosaic_ids_list_full, im_mosaic_dts_list_full
+
+            except Exception as e:
+                error_id = str(e).split('ID=')[1].split(')')[0]
+                print(f"Error querying GEE for {str(error_id)}")
+
+                # Parse the error date from the exception message (replace this with your actual parsing logic)
+                error_date = datetime.datetime.strptime(error_id[0:8], '%Y%m%d')
+                error_dates.append(error_date)
+
+                # Update date ranges excluding the problematic date
+                date_starts = [date_start] + [str(error_date + datetime.timedelta(days=1))[0:10] for error_date in
+                                              error_dates]
+                date_ends = [str(error_date - datetime.timedelta(days=1))[0:10] for error_date in error_dates] + [
+                    date_end]
+                date_ranges = list(zip(date_starts, date_ends))
+
+                # Set the error flag to indicate that an error occurred
+                error_occurred = True
+
+    # -----Apply functions
+    if dataset == 'Landsat':  # must run Landsat 8 and 9 separately
+        im_ids_list_8, im_dts_list_8 = extract_valid_image_ids('Landsat8', date_start, date_end, region,
+                                                               cloud_cover_max, mask_clouds)
+        im_ids_list_9, im_dts_list_9 = extract_valid_image_ids('Landsat9', date_start, date_end, region,
+                                                               cloud_cover_max, mask_clouds)
         if (type(im_ids_list_8) is str) and (type(im_ids_list_9) is str):
             im_ids_list, im_dts_list = 'N/A', 'N/A'
         elif type(im_ids_list_9) is str:
@@ -1203,8 +1327,9 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
             im_ids_list = im_ids_list_8 + im_ids_list_9
             im_dts_list = im_dts_list_8 + im_dts_list_9
     else:
-        im_ids_list, im_dts_list = image_mosaic_ids(im_col_gd)
-    # check if any images were found after filtering by month and determine mosaic IDs
+        im_ids_list, im_dts_list = extract_valid_image_ids(dataset, date_start, date_end, region, cloud_cover_max,
+                                                           mask_clouds)
+    # Check if any images were found after filtering
     if type(im_ids_list) is str:
         print('No images found or error in one or more image IDs, exiting...')
         return 'N/A'
@@ -1258,7 +1383,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 # download to file
                 im_composite.download(os.path.join(im_out_path, im_fn),
                                       region=region,
-                                      scale=dataset_dict[dataset]['resolution_m'],
+                                      scale=res,
                                       crs='EPSG:' + epsg_utm,
                                       dtype='int16',
                                       bands=im_composite.refl_bands)
@@ -1278,10 +1403,11 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
             # set CRS
             im_xr.rio.write_crs('EPSG:' + str(im_da.rio.crs.to_epsg()), inplace=True)
 
-        else:  # if no image downloads necessary, use wxee
+        # if no image downloads necessary, use wxee
+        else:
 
             # if more than one ID, composite images
-            if len(im_dts) > 1:
+            if len(im_ids) > 1:
                 # create list of MaskedImages from IDs
                 ims_gd = [gd.MaskedImage.from_id(im_id, mask=mask_clouds, region=region) for im_id in im_ids]
                 # convert to list of ee.Images

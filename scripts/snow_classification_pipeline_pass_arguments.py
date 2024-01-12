@@ -36,8 +36,6 @@ import json
 from tqdm.auto import tqdm
 from joblib import load
 import argparse
-import dask.bag as db
-from dask.diagnostics import ProgressBar
 import warnings
 
 warnings.simplefilter("ignore")
@@ -110,9 +108,7 @@ def main():
     # -----Determine image clipping & plotting settings
     plot_results = True  # = True to plot figures of results for each image where applicable
     skip_clipped = False  # = True to skip images where bands appear "clipped", i.e. max(blue) < 0.8
-    crop_to_aoi = True  # = True to crop images to AOI before calculating SCA
     save_outputs = True  # = True to save SCAs and snowlines to file
-    save_figures = True  # = True to save output figures to file
 
     print(site_name)
     print(' ')
@@ -129,6 +125,7 @@ def main():
     # -----Add path to functions
     sys.path.insert(1, os.path.join(base_path, 'functions'))
     import pipeline_utils as f
+    import PlanetScope_preprocessing as psp
 
     # -----Load dataset dictionary
     dataset_dict_fn = os.path.join(base_path, 'inputs-outputs', 'datasets_characteristics.json')
@@ -183,8 +180,7 @@ def main():
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
                                              month_end,
                                              cloud_cover_max, mask_clouds, site_name, clf, feature_cols, s2_toa_im_path,
-                                             im_classified_path, snowlines_path, figures_out_path, crop_to_aoi,
-                                             plot_results,
+                                             im_classified_path, snowlines_path, figures_out_path, plot_results,
                                              verbose, im_download)
 
     # ------------------------ #
@@ -209,8 +205,7 @@ def main():
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
                                              month_end,
                                              cloud_cover_max, mask_clouds, site_name, clf, feature_cols, s2_sr_im_path,
-                                             im_classified_path, snowlines_path, figures_out_path, crop_to_aoi,
-                                             plot_results,
+                                             im_classified_path, snowlines_path, figures_out_path, plot_results,
                                              verbose, im_download)
 
     # ------------------------- #
@@ -235,8 +230,7 @@ def main():
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
                                              month_end,
                                              cloud_cover_max, mask_clouds, site_name, clf, feature_cols, l_im_path,
-                                             im_classified_path, snowlines_path, figures_out_path, crop_to_aoi,
-                                             plot_results,
+                                             im_classified_path, snowlines_path, figures_out_path, plot_results,
                                              verbose, im_download)
 
     # ------------------------- #
@@ -257,7 +251,7 @@ def main():
         if mask_clouds:
             print('Masking images using cloud bitmask...')
             for im_fn in tqdm(im_fns):
-                f.planetscope_mask_image_pixels(ps_im_path, im_fn, ps_im_masked_path, save_outputs, plot_results)
+                psp.planetscope_mask_image_pixels(ps_im_path, im_fn, ps_im_masked_path, save_outputs, plot_results)
         # read masked image file names
         os.chdir(ps_im_masked_path)
         im_masked_fns = sorted(glob.glob('*_mask.tif'))
@@ -265,57 +259,81 @@ def main():
         # -----Mosaic images captured within same hour
         print('Mosaicking images captured in the same hour...')
         if mask_clouds:
-            f.planetscope_mosaic_images_by_date(ps_im_masked_path, im_masked_fns, ps_im_mosaics_path, aoi_utm)
+            psp.planetscope_mosaic_images_by_date(ps_im_masked_path, im_masked_fns, ps_im_mosaics_path, aoi_utm)
             print(' ')
         else:
-            f.planetscope_mosaic_images_by_date(ps_im_path, im_fns, ps_im_mosaics_path, aoi_utm)
+            psp.planetscope_mosaic_images_by_date(ps_im_path, im_fns, ps_im_mosaics_path, aoi_utm)
             print(' ')
 
         # -----Load trained classifier and feature columns
-        clf_fn = base_path + 'inputs-outputs/PlanetScope_classifier_all_sites.joblib'
+        clf_fn = os.path.join(base_path, 'inputs-outputs', 'PlanetScope_classifier_all_sites.joblib')
         clf = load(clf_fn)
-        feature_cols_fn = base_path + 'inputs-outputs/PlanetScope_feature_columns.json'
+        feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'PlanetScope_feature_columns.json')
         feature_cols = json.load(open(feature_cols_fn))
         dataset = 'PlanetScope'
 
-        # -----Adjust image radiometry
-        # read mosaicked image file names
+        # -----Iterate over image mosaics
+        # read image mosaic file names
         os.chdir(ps_im_mosaics_path)
         im_mosaic_fns = sorted(glob.glob('*.tif'))
         # create polygon(s) of the top and bottom 20th percentile elevations within the AOI
-        polygons_top, polygons_bottom = f.create_aoi_elev_polys(aoi_utm, dem)
+        polygons_top, polygons_bottom = psp.create_aoi_elev_polys(aoi_utm, dem)
         # loop through images
         for im_mosaic_fn in tqdm(im_mosaic_fns):
 
-            # -----Open image mosaic
-            im_da = xr.open_dataset(ps_im_mosaics_path + im_mosaic_fn)
-            # determine image date from image mosaic file name
+            # -----Determine image date from image mosaic file name
             im_date = im_mosaic_fn[0:4] + '-' + im_mosaic_fn[4:6] + '-' + im_mosaic_fn[6:8] + 'T' + im_mosaic_fn[
                                                                                                     9:11] + ':00:00'
             im_dt = np.datetime64(im_date)
             if verbose:
                 print(im_date)
 
-            # -----Adjust radiometry
-            im_adj, im_adj_method = f.planetscope_adjust_image_radiometry(im_da, im_dt, polygons_top, polygons_bottom,
-                                                                          dataset_dict, skip_clipped)
-            if type(im_adj) == str:  # skip if there was an error in adjustment
-                continue
-
-            # -----Classify image
+            # -----Check if classified image already exists in file
+            # check if classified image already exists in file
             im_classified_fn = im_date.replace('-', '').replace(':',
                                                                 '') + '_' + site_name + '_' + dataset + '_classified.nc'
             if os.path.exists(os.path.join(im_classified_path, im_classified_fn)):
                 if verbose:
                     print('Classified image already exists in file, loading...')
-                im_classified = xr.open_dataset(im_classified_path + im_classified_fn)
+                im_classified = xr.open_dataset(os.path.join(im_classified_path, im_classified_fn))
+
                 # remove no data values
                 im_classified = xr.where(im_classified == -9999, np.nan, im_classified)
+                # reproject to UTM
+                im_classified = im_classified.rio.write_crs('EPSG:4326')
+                im_classified = im_classified.rio.reproject('EPSG:' + epsg_utm)
             else:
-                im_classified = f.classify_image(im_adj, clf, feature_cols, crop_to_aoi, aoi_utm, dem, dataset_dict,
+
+                # -----Open image mosaic
+                im_da = xr.open_dataset(os.path.join(ps_im_mosaics_path, im_mosaic_fn))
+
+                # -----Adjust radiometry
+                im_adj, im_adj_method = psp.planetscope_adjust_image_radiometry(im_da, im_dt, polygons_top,
+                                                                                polygons_bottom,
+                                                                                dataset_dict, skip_clipped)
+                if type(im_adj) is str:  # skip if there was an error in adjustment
+                    continue
+
+                # -----Check that image mosaic covers at least 70% of the AOI
+                # Create dummy band for AOI masking comparison
+                im_adj['aoi_mask'] = (
+                ['time', 'y', 'x'], np.ones(np.shape(im_adj[dataset_dict[dataset]['RGB_bands'][0]].data)))
+                im_aoi = im_adj.rio.clip(aoi_utm.geometry, im_adj.rio.crs)
+                # Calculate the percentage of real values in the AOI
+                perc_real_values_aoi = (
+                            len(np.where(~np.isnan(np.ravel(im_aoi[dataset_dict[dataset]['RGB_bands'][0]].data)))[0])
+                            / len(np.where(~np.isnan(np.ravel(im_aoi['aoi_mask'].data)))[0]))
+                if perc_real_values_aoi < 0.7:
+                    if verbose:
+                        print('Less than 70% coverage of the AOI, skipping image...')
+                        print(' ')
+                    continue
+
+                # -----Classify image
+                im_classified = f.classify_image(im_adj, clf, feature_cols, aoi_utm, dataset_dict,
                                                  dataset, im_classified_fn, im_classified_path, verbose)
-            if type(im_classified) == str:
-                continue
+                if type(im_classified) == str:
+                    continue
 
             # -----Delineate snowline(s)
             # check if snowline already exists in file
@@ -323,11 +341,13 @@ def main():
             if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
                 if verbose:
                     print('Snowline already exists in file, skipping...')
+                    print(' ')
+                continue
             else:
                 plot_results = True
-                snowline_df = f.delineate_snowline(im_adj, im_classified, site_name, aoi_utm, dem, dataset_dict,
+                snowline_df = f.delineate_snowline(im_classified, site_name, aoi_utm, dem, dataset_dict,
                                                    dataset, im_date, snowline_fn, snowlines_path, figures_out_path,
-                                                   plot_results, verbose)
+                                                   plot_results, im_adj, verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
             if verbose:
