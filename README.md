@@ -5,7 +5,7 @@ Rainey Aberle, Ellyn Enderlin, HP Marshall, Shad O'Neel, & Alejandro Flores
 Department of Geosciences, Boise State University
 
 ## Description
-Workflow for detecting glacier snow-covered area, accumulation area ratios, and seasonal snowlines in Sentinel-2, Landsat 8/9, and PlanetScope 4-band imagery.
+Workflow and tools for detecting snow-covered area, accumulation area ratio, and seasonal snowlines on mountain glacier surfaces using Landsat 8/9, PlanetScope, and Sentinel-2 imagery.
 
 __Basic image processing workflow:__
 
