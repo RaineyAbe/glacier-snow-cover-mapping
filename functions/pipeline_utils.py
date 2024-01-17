@@ -436,6 +436,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     dem_aoi = dem.rio.clip(aoi.geometry, aoi.crs)
     dem_aoi = xr.where(dem_aoi < 3e38, dem_aoi, np.nan)
     dem_aoi_interp = dem_aoi.interp(x=im_classified.x.data, y=im_classified.y.data, method='linear')
+    dem_aoi_interp = xr.where(dem_aoi_interp < 3e38, dem_aoi_interp, np.nan)
     # add elevation as a band to classified image for convenience
     im_classified['elevation'] = (('y', 'x'), dem_aoi_interp.elevation.data)
 
@@ -556,6 +557,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
 
     # -----Calculate the equilibrium line altitude (ELA) from the AAR
     dem_clip = dem.rio.clip(aoi.geometry, aoi.crs)
+    dem_clip = xr.where(dem_clip < 3e38, dem_clip, np.nan)
     elevations = np.ravel(dem_clip.elevation.data)
     ela_from_aar = np.nanquantile(elevations, 1 - aar)
 
