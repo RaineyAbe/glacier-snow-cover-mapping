@@ -4,6 +4,9 @@
 *__pycache__*
 *.DS_Store
 
+# figures - must be uploaded directly to GitHub
+figures/*
+
 # .zip folders of study area shapefiles
 Inputs-outputs/*.zip
 
@@ -15,7 +18,7 @@ scripts/example_slurm_*.bash
 scripts/slurm_*.bash
 
 # Individual images for gif
-figures/SouthCascadeGlacier_results_gif/20*.png
+figures/SouthCascadeGlacier_example_results_gif/
 
 # drafts, random notebooks, etc.
 notebooks/drafts_untested/

@@ -288,6 +288,16 @@ def main():
             if verbose:
                 print(im_date)
 
+            # -----Open image mosaic
+            im_da = xr.open_dataset(os.path.join(ps_im_mosaics_path, im_mosaic_fn))
+
+            # -----Adjust radiometry
+            im_adj, im_adj_method = psp.planetscope_adjust_image_radiometry(im_da, im_dt, polygons_top,
+                                                                            polygons_bottom,
+                                                                            dataset_dict, skip_clipped)
+            if type(im_adj) is str:  # skip if there was an error in adjustment
+                continue
+
             # -----Check if classified image already exists in file
             # check if classified image already exists in file
             im_classified_fn = im_date.replace('-', '').replace(':',
@@ -303,16 +313,6 @@ def main():
                 im_classified = im_classified.rio.write_crs('EPSG:4326')
                 im_classified = im_classified.rio.reproject('EPSG:' + epsg_utm)
             else:
-
-                # -----Open image mosaic
-                im_da = xr.open_dataset(os.path.join(ps_im_mosaics_path, im_mosaic_fn))
-
-                # -----Adjust radiometry
-                im_adj, im_adj_method = psp.planetscope_adjust_image_radiometry(im_da, im_dt, polygons_top,
-                                                                                polygons_bottom,
-                                                                                dataset_dict, skip_clipped)
-                if type(im_adj) is str:  # skip if there was an error in adjustment
-                    continue
 
                 # -----Check that image mosaic covers at least 70% of the AOI
                 # Create dummy band for AOI masking comparison
