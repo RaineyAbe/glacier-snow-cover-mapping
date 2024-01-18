@@ -865,30 +865,26 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                                                                                        end_date=date_end,
                                                                                        region=region,
                                                                                        cloudless_portion=100 - cloud_cover_max,
-                                                                                       mask=mask_clouds,
-                                                                                       fill_portion=35)
+                                                                                       mask=mask_clouds)
         elif dataset == 'Landsat9':
             # Landsat 9
             im_col_gd = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
                                                                                        end_date=date_end,
                                                                                        region=region,
                                                                                        cloudless_portion=100 - cloud_cover_max,
-                                                                                       mask=mask_clouds,
-                                                                                       fill_portion=35)
+                                                                                       mask=mask_clouds)
         elif dataset == 'Sentinel-2_TOA':
             im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
                                                                                          end_date=date_end,
                                                                                          region=region,
                                                                                          cloudless_portion=100 - cloud_cover_max,
-                                                                                         mask=mask_clouds,
-                                                                                         fill_portion=35)
+                                                                                         mask=mask_clouds)
         elif dataset == 'Sentinel-2_SR':
             im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
                                                                                             end_date=date_end,
                                                                                             region=region,
                                                                                             cloudless_portion=100 - cloud_cover_max,
-                                                                                            mask=mask_clouds,
-                                                                                            fill_portion=35)
+                                                                                            mask=mask_clouds)
         else:
             print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
                   "Exiting...")
@@ -1046,7 +1042,6 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
         percentage_covered = (covered_area / total_area) * 100
         print(percentage_covered)
         return percentage_covered
-
     def calculate_aoi_coverage_xr(im_xr, aoi_gdf):
         # Clip the dataset to the geometry
         im_xr_clipped = im_xr[dataset_dict[dataset]['RGB_bands'][0]].rio.clip(aoi_gdf.geometry)
@@ -1236,16 +1231,14 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                                                                                        end_date=date_end,
                                                                                        region=region,
                                                                                        cloudless_portion=100 - cloud_cover_max,
-                                                                                       mask=mask_clouds,
-                                                                                       fill_portion=70)
+                                                                                       mask=mask_clouds)
         elif dataset == 'Landsat9':
             # Landsat 9
             im_col_gd = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
                                                                                        end_date=date_end,
                                                                                        region=region,
                                                                                        cloudless_portion=100 - cloud_cover_max,
-                                                                                       mask=mask_clouds,
-                                                                                       fill_portion=70)
+                                                                                       mask=mask_clouds)
         elif dataset == 'Sentinel-2_TOA':
             im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
                                                                                          end_date=date_end,
@@ -1491,6 +1484,11 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 ims_xr_composite = xr.where(ims_xr_composite > 0, ims_xr_composite, np.nan)
                 # set CRS
                 ims_xr_composite.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
+                # check that image covers at least 70% of the AOI
+                percentage_covered = calculate_aoi_coverage_xr(ims_xr_composite, aoi_utm)
+                if percentage_covered >= 70:
+                    # append to list of xarray.Datasets
+                    im_xr_list.append(ims_xr_composite) 
                 # append to list of xarray.Datasets
                 im_xr_list.append(ims_xr_composite)
             else:
