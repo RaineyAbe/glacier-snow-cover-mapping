@@ -5,7 +5,7 @@
 *.DS_Store
 
 # figures - must be uploaded directly to GitHub
-figures/*
+figures/
 
 # .zip folders of study area shapefiles
 Inputs-outputs/*.zip
