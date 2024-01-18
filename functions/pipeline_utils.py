@@ -62,10 +62,10 @@ def plot_xr_rgb_image(im_xr, rgb_bands):
     Parameters
     ----------
     im_xr: xarray.DataSet
-        dataset containing image bands in data variables with x and y coordinates.
-        Assumes x and y coordinates are in units of meters.
+        Dataset containing image bands in data variables with x, y, and time coordinates.
+        Function assumed x and y coordinates are in units of meters.
     rgb_bands: List
-        list of data variable names for RGB bands contained within the dataset, e.g. ['red', 'green', 'blue']
+        List of data variable names for RGB bands contained within the dataset, e.g. ['red', 'green', 'blue']
 
     Returns
     ----------
@@ -134,7 +134,7 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     Returns
     ----------
     dem_ds: xarray.Dataset
-        elevations extracted within the AOI
+        dataset of elevations over the AOI
     """
 
     # -----Grab optimal UTM zone from AOI CRS
@@ -248,7 +248,7 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
     Parameters
     ----------
     im_xr: xarray.Dataset
-        input image
+        Dataset containing image bands in data variables with x, y, and time coordinates.
     clf: sklearn.classifier
         previously trained SciKit Learn Classifier
     feature_cols: array of pandas.DataFrame columns, e.g. ['blue', 'green', 'red']
@@ -265,7 +265,7 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
     out_path: str
         path in directory where classified images will be saved
     verbose: bool
-        whether to print details while classifying each image
+        whether to output verbage for each image (default=False)
 
     Returns
     ----------
@@ -371,14 +371,14 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     Parameters
     ----------
     im_classified: xarray.Dataset
-        classified image, used to delineate snowlines
+        classified image
     site_name: str
-        name of study site, used for output file names
+        name of study site
     aoi:  geopandas.geodataframe.GeoDataFrame
-        area of interest, used to crop classified images
+        area of interest
         must be in the same coordinate reference system as the classified image
     dem: xarray.Dataset
-        digital elevation model over the aoi, used to calculate the ELA from the AAR
+        digital elevation model over the aoi
         must be in the same coordinate reference system as the classified image
     dataset_dict: dict
         dictionary of dataset-specific parameters
@@ -395,7 +395,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     plot_results: bool
         whether to plot RGB image, classified image, and resulting snowline and save figure to file
     im_xr: xarray.Dataset
-        input reflectance image, used for plotting
+        input reflectance image
         if no image provided, will query GEE for image thumbnail
     verbose: bool
         whether to print details during the process
@@ -708,7 +708,7 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
     dataset: str
         name of dataset ('Landsat', 'Sentinel2', 'PlanetScope')
     site_name: str
-        name of site, used for output file names
+        name of site
     im_classified_path: str
         path in directory where classified netCDF images will be saved
     snowlines_path: str
@@ -733,6 +733,7 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
     Returns
     -------
     snowline_df: pandas.DataFrame
+        resulting data table containing snow cover statistics and snowline geometry
     """
     # Grab image date string from time variable
     im_date = str(im_xr.time.data[0])[0:19]
@@ -797,8 +798,10 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
     dataset: str
         name of dataset ('Landsat', 'Sentinel-2_SR', 'Sentinel-2_TOA', 'PlanetScope')
     aoi_utm: geopandas.geodataframe.GeoDataFrame
-        area of interest used for searching and clipping images
+        area of interest with CRS in local UTM zone
     dem: xarray.Dataset
+        digital elevation model over the aoi
+        must be in the same coordinate reference system as the classified image
     date_start: str
         start date for image search ('YYYY-MM-DD')
     date_end: str
@@ -812,23 +815,23 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
     mask_clouds: bool
         whether to mask clouds using geedim masking tools
     site_name: str
-
+        name of study site
     clf: sklearn pre-trained model
-
+        classifier applied to the input image, specific to image dataset
     feature_cols: list of str
-
+        features (i.e., image bands and NDSI) to use for classifying
     im_out_path: str
-
+        path where images will be saved if im_download = True
     im_classified_path: str
-
+        path where classified image netCDF's will be saved
     snowlines_path: str
-
+        path where snowline CSV's will be saved
     figures_out_path: str
-
+        path where figures will be saved
     crop_to_aoi: bool
-
+        whether to crop images to the aoi_utm geometry before classifying
     plot_results: bool
-
+        whether to plot results and save figure
     verbose: bool
 
     im_download: bool
@@ -863,7 +866,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                                                                                        region=region,
                                                                                        cloudless_portion=100 - cloud_cover_max,
                                                                                        mask=mask_clouds,
-                                                                                       fill_portion=70)
+                                                                                       fill_portion=35)
         elif dataset == 'Landsat9':
             # Landsat 9
             im_col_gd = gd.MaskedCollection.from_name('LANDSAT/LC09/C02/T1_L2').search(start_date=date_start,
@@ -871,21 +874,21 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                                                                                        region=region,
                                                                                        cloudless_portion=100 - cloud_cover_max,
                                                                                        mask=mask_clouds,
-                                                                                       fill_portion=70)
+                                                                                       fill_portion=35)
         elif dataset == 'Sentinel-2_TOA':
             im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_HARMONIZED').search(start_date=date_start,
                                                                                          end_date=date_end,
                                                                                          region=region,
                                                                                          cloudless_portion=100 - cloud_cover_max,
                                                                                          mask=mask_clouds,
-                                                                                         fill_portion=70)
+                                                                                         fill_portion=35)
         elif dataset == 'Sentinel-2_SR':
             im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
                                                                                             end_date=date_end,
                                                                                             region=region,
                                                                                             cloudless_portion=100 - cloud_cover_max,
                                                                                             mask=mask_clouds,
-                                                                                            fill_portion=70)
+                                                                                            fill_portion=35)
         else:
             print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
                   "Exiting...")
@@ -1025,7 +1028,39 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
         print('Variable out_path must be specified to download images. Exiting...')
         return 'N/A'
 
-    # -----Create list of xarray.Datasets from list of image IDs
+    # -----Define functions to calculate percent coverage of the AOI
+    def calculate_aoi_coverage_ee(im_ee, aoi_ee):
+        # Clip the image to the geometry
+        im_ee_clipped = im_ee.clip(aoi_ee)
+        # Mask out NaN pixels
+        masked_image = im_ee_clipped.updateMask(im_ee_clipped.mask())
+        # Calculate the area of non-NaN pixels within the geometry
+        covered_area = masked_image.reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=aoi_ee,
+            scale=im_ee.projection().nominalScale()
+        ).getInfo()
+        # Calculate the total area of the geometry
+        total_area = aoi_ee.area().getInfo()
+        # Compute the percentage of the geometry covered by non-NaN pixels
+        percentage_covered = (covered_area / total_area) * 100
+        print(percentage_covered)
+        return percentage_covered
+
+    def calculate_aoi_coverage_xr(im_xr, aoi_gdf):
+        # Clip the dataset to the geometry
+        im_xr_clipped = im_xr[dataset_dict[dataset]['RGB_bands'][0]].rio.clip(aoi_gdf.geometry)
+        # Mask out NaN values
+        im_xr_clipped_masked = im_xr_clipped.where(im_xr_clipped.notnull())
+        # Calculate the area of non-NaN pixels within the geometry
+        covered_area = im_xr_clipped_masked.sum(dim=['x', 'y']).sum().item() * (res**2)
+        # Calculate the total area of the geometry
+        total_area = aoi_gdf.geometry[0].area
+        # Compute the percentage of the geometry covered by non-NaN pixels
+        percentage_covered = (covered_area / total_area) * 100
+        return percentage_covered
+
+    # -----Create xarray.Datasets from list of image IDs
     # loop through image IDs
     for i in tqdm(range(0, len(im_ids_list))):
 
@@ -1054,13 +1089,20 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
                                                        mask=mask_clouds,
                                                        region=region)
-                # download to file
-                im_composite.download(os.path.join(im_out_path, im_fn),
-                                      region=region,
-                                      scale=res,
-                                      crs='EPSG:' + epsg_utm,
-                                      dtype='int16',
-                                      bands=im_composite.refl_bands)
+                # check that image covers at least 70% of the AOI
+                percentage_covered = calculate_aoi_coverage_ee(im_composite.ee_image, region)
+                if percentage_covered >= 70:
+                    # download to file
+                    im_composite.download(os.path.join(im_out_path, im_fn),
+                                          region=region,
+                                          scale=res,
+                                          crs='EPSG:' + epsg_utm,
+                                          dtype='int16',
+                                          bands=im_composite.refl_bands)
+                else:
+                    if verbose:
+                        print('Image covers < 70% of the AOI, skipping...')
+                    continue
             # load image from file
             im_da = rxr.open_rasterio(os.path.join(im_out_path, im_fn))
             # convert to xarray.DataSet
@@ -1116,10 +1158,18 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 # set CRS
                 im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
 
-            # -----Run classification pipeline
-            apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                          snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
-                                          figures_out_path, plot_results, verbose)
+            # -----Check that image covers at least 70% of the AOI
+            percentage_covered = calculate_aoi_coverage_xr(im_xr, aoi_utm)
+            if percentage_covered >= 70:
+
+                # -----Run classification pipeline
+                apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
+                                              snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
+                                              figures_out_path, plot_results, verbose)
+            else:
+                if verbose:
+                    print('Image covers < 70% of the AOI, skipping...')
+                continue
 
     return
 
@@ -1160,7 +1210,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
     Returns
     __________
     im_xr_list: list of xarray.Datasets
-        resulting images
+        list of resulting images
     """
 
     # -----Grab optimal UTM zone from AOI CRS
@@ -1201,15 +1251,13 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                                                                                          end_date=date_end,
                                                                                          region=region,
                                                                                          cloudless_portion=100 - cloud_cover_max,
-                                                                                         mask=mask_clouds,
-                                                                                         fill_portion=70)
+                                                                                         mask=mask_clouds)
         elif dataset == 'Sentinel-2_SR':
             im_col_gd = gd.MaskedCollection.from_name('COPERNICUS/S2_SR_HARMONIZED').search(start_date=date_start,
                                                                                             end_date=date_end,
                                                                                             region=region,
                                                                                             cloudless_portion=100 - cloud_cover_max,
-                                                                                            mask=mask_clouds,
-                                                                                            fill_portion=70)
+                                                                                            mask=mask_clouds)
         else:
             print("'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
                   "Exiting...")
@@ -1352,6 +1400,20 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
         print('Variable out_path must be specified to download images. Exiting...')
         return 'N/A'
 
+    # -----Define function to calculate percent coverage of the AOI
+    def calculate_aoi_coverage_xr(im_xr, aoi_gdf):
+        # Clip the dataset to the geometry
+        im_xr_clipped = im_xr[dataset_dict[dataset]['RGB_bands'][0]].rio.clip(aoi_gdf.geometry)
+        # Mask out NaN values
+        im_xr_clipped_masked = im_xr_clipped.where(im_xr_clipped.notnull())
+        # Calculate the area of non-NaN pixels within the geometry
+        covered_area = im_xr_clipped_masked.sum(dim=['x', 'y']).sum().item() * (res**2)
+        # Calculate the total area of the geometry
+        total_area = aoi_gdf.geometry[0].area
+        # Compute the percentage of the geometry covered by non-NaN pixels
+        percentage_covered = (covered_area / total_area) * 100
+        return percentage_covered
+
     # -----Create list of xarray.Datasets from list of image IDs
     im_xr_list = []  # initialize list of xarray.Datasets
     # loop through image IDs
@@ -1382,13 +1444,18 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
                                                        mask=mask_clouds,
                                                        region=region)
-                # download to file
-                im_composite.download(os.path.join(im_out_path, im_fn),
-                                      region=region,
-                                      scale=res,
-                                      crs='EPSG:' + epsg_utm,
-                                      dtype='int16',
-                                      bands=im_composite.refl_bands)
+                # check that image covers at least 70% of the AOI
+                percentage_covered = calculate_aoi_coverage_xr(im_composite, aoi_utm)
+                if percentage_covered >= 70:
+                    # download to file
+                    im_composite.download(os.path.join(im_out_path, im_fn),
+                                          region=region,
+                                          scale=res,
+                                          crs='EPSG:' + epsg_utm,
+                                          dtype='int16',
+                                          bands=im_composite.refl_bands)
+                else:
+                    continue
             # load image from file
             im_da = rxr.open_rasterio(os.path.join(im_out_path, im_fn))
             # convert to xarray.DataSet
@@ -1439,14 +1506,35 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 im_xr = xr.where(im_xr > 0, im_xr, np.nan)
                 # set CRS
                 im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
-                # append to list of xarray.Datasets
-                im_xr_list.append(im_xr)
+                # check that image covers at least 70% of the AOI
+                percentage_covered = calculate_aoi_coverage_xr(im_xr, aoi_utm)
+                if percentage_covered >= 70:
+                    # append to list of xarray.Datasets
+                    im_xr_list.append(im_xr)
 
     return im_xr_list
 
 
 # --------------------------------------------------
 def query_gee_for_image_thumbnail(dataset, dt, aoi_utm):
+    '''
+
+    Parameters
+    ----------
+    dataset: str
+        which dataset / image collection to query
+    dt: numpy.datetime64
+        image capture datetime
+    aoi_utm: geopandas.geodataframe.GeoDataFrame
+        area of interest used for filtering the image collection, reprojected to the optimal UTM zone
+
+    Returns
+    -------
+    image: PIL.image object
+        resulting image thumbnail
+    bounds: numpy.array
+        bounds of the image, derived from the aoi (minx, miny, maxx, maxy)
+    '''
 
     # -----Grab datetime from snowline df
     date_start = str(dt - np.timedelta64(1, 'D'))
