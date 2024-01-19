@@ -38,7 +38,7 @@ Below are an example time series of snow-covered area (SCA), accumulation area r
 
 __Classified images and seasonal snowlines__
 
-![](figures/SouthCascadeGlacier_results_gif/output.gif)
+![](figures/SouthCascadeGlacier_example_results_smaller.gif)
 
 __Snow cover metrics time series and weekly median trends__
 
