@@ -9,7 +9,7 @@ Workflow and tools for detecting snow-covered area, accumulation area ratio, and
 
 __Basic image processing workflow:__
 
-<img src='figures/fig04_methods_workflow.png" alt="Image processing workflow' width='600'/>
+<img src='figures/fig04_methods_workflow.png' width='600'/>
 
 ## Requirements
 
