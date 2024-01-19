@@ -8,10 +8,10 @@
 # - Open a command window
 # - Change directory ("cd") to snow_cover_mapping/scripts/
 # - Activate conda environment: "conda activate snow-cover-mapping"
-# - Run the script: "sh pipeline_args_example.sh" replacing with your file name.
+# - Run the script: "sh snow_classification_pipeline_args_example.sh" replacing with your file name.
 
 # Define site name for convenience if desired
-site_name="Emmons"
+site_name="SITE-NAME"
 
 # Run snow classification pipeline - modify arguments before running
 python snow_classification_pipeline_pass_arguments.py \
@@ -22,7 +22,7 @@ python snow_classification_pipeline_pass_arguments.py \
 -out_path "/Research/PhD/snow_cover_mapping/study-sites/${site_name}/imagery/" \
 -figures_out_path "/Research/PhD/snow_cover_mapping/study-sites/${site_name}/figures/" \
 -date_start "2013-01-01" \
--date_end "2023-06-01" \
+-date_end "2023-12-01" \
 -month_start 5 \
 -month_end 10 \
 -cloud_cover_max 70 \
