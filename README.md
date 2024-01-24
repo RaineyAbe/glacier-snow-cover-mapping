@@ -31,19 +31,6 @@ Aberle, R., Enderlin, E., O'Neel, S., Marshall., H.P., Florentine, C., Sass, L.,
 
 DOI via Zenodo for this GitHub repository coming soon.
 
-## Example results
-Below are an example time series of snow-covered area (SCA), accumulation area ratio (AAR), and median snowline elevations at South Cascade Glacier, Washington state for 2013--2022.
-
-__Classified images and seasonal snowlines__
-
-![](figures/SouthCascadeGlacier_example_results_smaller.gif)
-
-__Snow cover metrics time series and weekly median trends__
-
-Weekly median trends are excluding PlanetScope to mitigate noise.
-
-<img src='figures/timeseries_SouthCascade_Glacier.png' width='700'>
-
 ## Image classifiers development
 - __Image classifiers__ are located in the `inputs-outputs/` folder with the following naming convention: `{IMAGE PRODUCT}_classifier_all_sites.joblib`. Refer to `notebooks/develop_classifiers.ipynb` for the code used to train and select the optimal classifier for each image product.
 
@@ -65,6 +52,19 @@ The snow detection workflow was assessed by comparing automated snow cover maps 
 
 
   - Automatically detected snowlines were compared to manually delineated and digitized snowlines and are available in the `inputs-outputs/models_validation_data/manually_digitized_snowlines/` folder as shapefiles with the following naming convention: `{SITE NAME}_{IMAGE DATE}_{IMAGE PRODUCT}_manually_digitized_snowline`.
+
+## Example results
+Below are an example time series of snow-covered area (SCA), accumulation area ratio (AAR), and median snowline elevations at South Cascade Glacier, Washington state for 2013--2022.
+
+__Classified images and seasonal snowlines__
+
+![](figures/SouthCascadeGlacier_example_results_smaller.gif)
+
+__Snow cover metrics time series and weekly median trends__
+
+Weekly median trends are excluding PlanetScope to mitigate noise.
+
+<img src='figures/timeseries_SouthCascade_Glacier.png' width='700'>
 
 ## Funding and Acknowledgements
 We would like to thank members of the [CryoGARS Glaciology](https://github.com/CryoGARS-Glaciology) lab at Boise State University and the [USGS Benchmark Glacier program](https://www.usgs.gov/programs/climate-research-and-development-program/science/usgs-benchmark-glacier-project) staff for their support and input. This work was funded by BAA-CRREL award W913E520C0017, NASA EPSCoR award 80NSSC20M0222, the SMART Scholarship, and the Idaho Space Grant Consortium. The workflow uses data from [Planet Labs, Inc.](https://www.planet.com/) which was made available through the [NASA Commercial Smallsat Data Acquisition (CSDA) Program](https://www.earthdata.nasa.gov/esds/csda).
