@@ -1,4 +1,4 @@
-# orders.py
+# PlanetScope_orders_utils.py
 # Functions used in the planetAPI_image_download.ipynb notebook
 # Modified from Planet Labs notebooks: https://github.com/planetlabs/notebooks/tree/master/jupyter-notebooks
 
@@ -106,7 +106,7 @@ def filter_image_ids(im_ids, start_month, end_month, out_path):
         if (im_month < start_month) or (im_month > end_month):
             continue
         # don't include if file already exists in directory
-        if len(glob.glob(out_path + im_id + '*.tif')) == 0:
+        if len(glob.glob(os.path.join(out_path, im_id + '*.tif'))) == 0:
             im_ids_filtered.append(im_id)
     im_ids_filtered = sorted(im_ids_filtered)
 
@@ -153,12 +153,15 @@ def build_request_with_item_ids(base_path, request_name, aoi_box, clip_to_aoi, h
     # grab all bundles
     bundles = list(bundles_dict['bundles'].keys())
     # iterate over bundles
+    bundle_type = None
     for bundle in bundles:
         items_in_bundle = list(bundles_dict['bundles'][bundle]['assets'].keys())
         if item_type in items_in_bundle:
             assets_in_bundle = bundles_dict['bundles'][bundle]['assets'][item_type]
             if asset_type in assets_in_bundle:
                 bundle_type = bundle
+    if bundle_type is None:
+        print(f'No bundle type found associated with specified asset and item types. \nPlease check Planet guides (https://developers.planet.com/apis/orders/product-bundles-reference/) to confirm item and asset types are part of a specific bundle before rerunning.')
 
     # define the tools
     clip_tool = order_request.clip_tool(aoi_box)
@@ -170,7 +173,6 @@ def build_request_with_item_ids(base_path, request_name, aoi_box, clip_to_aoi, h
         tools.append(clip_tool)
     if harmonize:
         tools.append(harmonize_tool)
-
     # define products to download
     products = [order_request.product(item_ids, bundle_type, item_type)]
 

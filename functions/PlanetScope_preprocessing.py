@@ -90,7 +90,7 @@ def planetscope_mask_image_pixels(im_path, im_fn, out_path, save_outputs, plot_r
             im_mask.data[i] = np.where(~np.isnan(im_mask.data[i]), im_mask.data[i] * im_scalar, -9999)
         im_mask.data = im_mask.data.astype(int)
         # write to tiff file
-        im_mask.rio.to_raster(out_path + im_mask_fn, dtype='int32')
+        im_mask.rio.to_raster(os.path.join(out_path, im_mask_fn), dtype='int32')
 
     # -----Plot results
     if plot_results:
@@ -100,6 +100,8 @@ def planetscope_mask_image_pixels(im_path, im_fn, out_path, save_outputs, plot_r
         im_mask = im_mask.where(im_mask != -9999) / im_scalar
         ax[1].imshow(np.dstack([im_mask.data[2], im_mask.data[1], im_mask.data[0]]))
         plt.show()
+
+    return
 
 
 def create_aoi_elev_polys(aoi, dem):
@@ -423,7 +425,7 @@ def planetscope_mosaic_images_by_date(im_path, im_fns, out_path, aoi):
                 for file_path in file_paths:
                     cmd += file_path + ' '
 
-                cmd += '-o ' + out_path_adj + out_im_fn
+                cmd += '-o ' + os.path.join(out_path_adj, out_im_fn)
 
                 # run the command
                 subprocess.run(cmd, shell=True, capture_output=True)
