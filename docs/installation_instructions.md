@@ -14,7 +14,7 @@ If you forked the code repository to your personal Git account, replace `RaineyA
 For managing the required Python packages, we recommend downloading either [Miniconda, Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html) or [Mamba](https://mamba.readthedocs.io/en/latest/index.html). This will allow you to install the environment directly using the `.yml` file. See the online user guides for [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) or [Mamba](https://mamba.readthedocs.io/en/latest/user_guide/mamba.html) if you are unfamiliar. If using Mamba, replace all instances of `conda` below with `mamba`.
 
 ## 3. Install the environment using the .yml file
-To ensure all required packages for the notebooks/scripts are installed, I recommend creating a conda/mamba environment using the `environment.yml` file provided by executing the following command:
+To ensure all required packages for the notebooks/scripts are installed, we recommend creating a conda/mamba environment using the `environment.yml` file provided by executing the following command:
 
 `conda env create -f environment.yml`
 
@@ -30,14 +30,14 @@ Run the following command so that you can use the `glacier-snow-cover-mapping` e
 `python -m ipykernel install --user --name=glacier-snow-cover-mapping`
 
 ## Recommended directory structure
-The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, I recommend that you structure your directory as outlined below. Otherwise, you can modify the file paths and names in the first section of each notebook/script.
+The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, we recommend that you structure your directory as outlined below. Otherwise, you can modify the file paths and names in the first section of each notebook/script.
 
 _Initial set-up:_ Before running any notebooks
 
     .
     ├── ...
-    ├── base_path                       # Folder containing the snow-cover-mapping code repository and study-sites folder
-    │   ├── snow-cover-mapping          # snow-cover-mapping code repository, root directory
+    ├── base_path                       # Folder containing the glacier-snow-cover-mapping code repository and study-sites folder
+    │   ├── glacier-snow-cover-mapping  # glacier-snow-cover-mapping code repository, root directory
     │   ├── study-sites                 # Folder where results and imagery for individual sites will be saved
     │   │   ├── site_name               # Folder containing all data for one study site. Replace site_name with the name of your site.
     │   │   │   ├── imagery             # Folder where images and workflow inputs and outputs are/will be saved
@@ -53,8 +53,8 @@ _After running the snow classification workflow:_ Includes directories that are 
 
     .
     ├── ...
-    ├── base_path                       # Folder containing the snow-cover-mapping code repository and study-sites folder
-    │   ├── snow-cover-mapping          # snow-cover-mapping code repository, root directory
+    ├── base_path                       # Folder containing the glacier-snow-cover-mapping code repository and study-sites folder
+    │   ├── glacier-snow-cover-mapping  # glacier-snow-cover-mapping code repository, root directory
     │   ├── study-sites                 # Folder where results and imagery for individual sites will be saved
     │   │   ├── site_name               # Folder containing all data for one study site
     │   │   │   ├── imagery             # Where images and workflow inputs and outputs are/will be saved

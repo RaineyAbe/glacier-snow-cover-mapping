@@ -6,10 +6,10 @@ Download imagery either through [Planet Explorer](planet.com/explorer) or using 
 __Disclaimers:__
 - Occasionally, Planet orders will fail before the download is complete. Previously submitted orders can be downloaded to file using  `Planet_re-download_past_orders.ipynb` in the `notebooks/` folder.
 
-- Planet Labs, Inc. updates their API and data repositories fairly regularly. Consequently, the functions and processes for querying and ordering PlanetScope and other images are not guaranteed to work after January 2024. If the notebooks are unsuccessful, we recommend referring to the [Planet SDK documentation](https://planet-sdk-for-python-v2.readthedocs.io/en/latest/python/sdk-guide/) or downloading imagery instead through Planet Explorer.
+- Planet Labs, Inc. updates their API and data repositories fairly regularly. The functions and processes for querying and ordering PlanetScope and other images are not guaranteed to work after January 2024. If the notebooks are unsuccessful, we recommend referring to the [Planet SDK documentation](https://planet-sdk-for-python-v2.readthedocs.io/en/latest/python/sdk-guide/) or downloading imagery instead through Planet Explorer.
 
 ### 2. Run the snow detection workflow
-The workflow can be run using a Jupyter Notebook, located in the `notebooks` directory, or a Python script, located in the `scripts` directory.
+The workflow can be run using a Jupyter Notebook, located in the `notebooks/` directory, or a Python script, located in the `scripts/` directory.
 
 To run the workflow by passing arguments in the command winder to the Python script, see `scripts/snow_classification_pipeline_args_example.sh`.
 
