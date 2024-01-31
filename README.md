@@ -2,6 +2,8 @@
 
 [Rainey Aberle](https://github.com/RaineyAbe) and [Ellyn Enderlin](https://github.com/ellynenderlin), Department of Geosciences, Boise State University
 
+Thank you to [Jukes Liu](https://github.com/jukesliu) for their contributions to the PlanetScope image download and processing steps. 
+
 ## Correspondence
 Rainey Aberle (raineyaberle@u.boisestate.edu)
 
@@ -23,7 +25,12 @@ __Basic image processing workflow:__
 Please see the [Installation Instructions](https://github.com/RaineyAbe/snow-cover-mapping/blob/main/docs/installation_instructions.md).
 
 ## Basic Workflow
-Please see the [Basic Workflow Instructions](https://github.com/RaineyAbe/snow-cover-mapping/blob/main/docs/basic_workflow.md).
+
+- (Optional) Download PlanetScope images using `Planet_images_order_download.ipynb` in the `notebooks/` folder.
+
+- Run the snow detection pipeline using the `snow_classification_pipeline.ipynb` notebook in the `notebooks/` folder, OR pass arguments to the `snow_classification_pipeline.py` file in the `scripts/` folder. See `snow_classification_pipeline_args_example.sh` in the `scripts/` folder for an example.
+
+Please see the [Basic Workflow Instructions](https://github.com/RaineyAbe/snow-cover-mapping/blob/main/docs/basic_workflow.md) for more detailed instructions.
 
 ## Citation
 
