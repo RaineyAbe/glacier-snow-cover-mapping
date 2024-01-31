@@ -13,7 +13,7 @@ If you forked the code repository to your personal Git account, replace `RaineyA
 ## 2. Install Conda or Mamba
 For managing the required Python packages, we recommend downloading either [Miniconda, Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html) or [Mamba](https://mamba.readthedocs.io/en/latest/index.html). This will allow you to install the environment directly using the `.yml` file. See the online user guides for [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) or [Mamba](https://mamba.readthedocs.io/en/latest/user_guide/mamba.html) if you are unfamiliar. If using Mamba, replace all instances of `conda` below with `mamba`.
 
-## 3. Create environment from .yml file
+## 3. Install the environment using the .yml file
 To ensure all required packages for the notebooks/scripts are installed, I recommend creating a conda/mamba environment using the `environment.yml` file provided by executing the following command:
 
 `conda env create -f environment.yml`
