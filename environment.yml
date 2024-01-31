@@ -1,4 +1,4 @@
-name: snow-cover-mapping
+name: glacier-snow-cover-mapping
 channels:
   - defaults
   - conda-forge
