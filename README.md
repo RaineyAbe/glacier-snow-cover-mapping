@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/427402996.svg)](https://zenodo.org/doi/10.5281/zenodo.10616385)
+
 # glacier-snow-cover-mapping
 
 [Rainey Aberle](https://github.com/RaineyAbe) and [Ellyn Enderlin](https://github.com/ellynenderlin), Department of Geosciences, Boise State University
