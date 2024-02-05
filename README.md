@@ -36,9 +36,9 @@ Please see the [Basic Workflow Instructions](https://github.com/RaineyAbe/snow-c
 
 ## Citation
 
-Aberle, R., Enderlin, E., O'Neel, S., Marshall., H.P., Florentine, C., Sass, L., and Dickson, A. (_in prep_) Automated snow cover detection on mountain glaciers using space-borne imagery.
+[![DOI](https://zenodo.org/badge/427402996.svg)](https://zenodo.org/doi/10.5281/zenodo.10616385)
 
-DOI via Zenodo for this GitHub repository coming soon.
+Aberle, R., Enderlin, E., O'Neel, S., Marshall., H.P., Florentine, C., Sass, L., and Dickson, A. (_in prep_) Automated snow cover detection on mountain glaciers using space-borne imagery.
 
 ## Image classifiers development
 - __Image classifiers__ are located in the `inputs-outputs/` folder with the following naming convention: `{IMAGE PRODUCT}_classifier_all_sites.joblib`. Refer to `notebooks/develop_classifiers.ipynb` for the code used to train and select the optimal classifier for each image product.
