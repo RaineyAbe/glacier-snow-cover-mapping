@@ -107,6 +107,18 @@ def plot_xr_rgb_image(im_xr, rgb_bands):
 
 # --------------------------------------------------
 def adjust_dem_data_vars(dem):
+    """
+
+    Parameters
+    ----------
+    dem: xarray.Dataset
+        digital elevation model (DEM)
+
+    Returns
+    -------
+    dem: xarray.Dataset
+        digital elevation model (DEM) with one band: "elevation"
+    """
     if 'band_data' in dem.data_vars:
         dem = dem.rename({'band_data': 'elevation'})
     if 'band' in dem.dims:
@@ -115,6 +127,8 @@ def adjust_dem_data_vars(dem):
         dem['elevation'] = (('y', 'x'), elev_data)
     return dem
 
+
+# --------------------------------------------------
 def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     """
     Query GEE for the ArcticDEM Mosaic (where there is coverage) or the NASADEM,
@@ -693,6 +707,40 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
 
 
 # --------------------------------------------------
+def calculate_aoi_coverage(im_xr, aoi_gdf, dataset_dict, dataset):
+    """
+    Calculate the percentage of the AOI covered by the image
+
+    Parameters
+    ----------
+    im_xr: xarray.Dataset
+        input image
+    aoi_gdf: gpd.GeoDataFrame
+        Area of Interest (AOI) used to clip the image and calculate coverage
+    dataset_dict: dict
+        dictionary of dataset-specific parameters
+    dataset: str
+        name of dataset ('Landsat', 'Sentinel2', 'PlanetScope')
+
+    Returns
+    -------
+    percentage_covered: float
+        Percentage of the AOI covered by the image
+    """
+    # Clip the dataset to the geometry
+    im_xr_clipped = im_xr[dataset_dict[dataset]['RGB_bands'][0]].rio.clip(aoi_gdf.geometry)
+    # Mask out NaN values
+    im_xr_clipped_masked = im_xr_clipped.where(im_xr_clipped.notnull())
+    # Calculate the area of non-NaN pixels within the geometry
+    covered_area = im_xr_clipped_masked.sum(dim=['x', 'y']).sum().item() * (res**2)
+    # Calculate the total area of the geometry
+    total_area = aoi_gdf.geometry[0].area
+    # Compute the percentage of the geometry covered by non-NaN pixels
+    percentage_covered = (covered_area / total_area) * 100
+    return percentage_covered
+
+
+# --------------------------------------------------
 def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path, snowlines_path,
                                   aoi_utm, dem, epsg_utm, clf, feature_cols, figures_out_path,
                                   plot_results, verbose):
@@ -904,7 +952,6 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
 
     # -----Define function to couple image IDs captured within the same hour for mosaicking
     def image_mosaic_ids(im_col_gd):
-
         # Grab image properties, IDs, and datetimes from image collection
         properties = im_col_gd.properties
         ims = dict(properties).keys()
@@ -1024,37 +1071,6 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
         print('Variable out_path must be specified to download images. Exiting...')
         return 'N/A'
 
-    # -----Define functions to calculate percent coverage of the AOI
-    def calculate_aoi_coverage_ee(im_ee, aoi_ee):
-        # Clip the image to the geometry
-        im_ee_clipped = im_ee.clip(aoi_ee)
-        # Mask out NaN pixels
-        masked_image = im_ee_clipped.updateMask(im_ee_clipped.mask())
-        # Calculate the area of non-NaN pixels within the geometry
-        covered_area = masked_image.reduceRegion(
-            reducer=ee.Reducer.sum(),
-            geometry=aoi_ee,
-            scale=im_ee.projection().nominalScale()
-        ).getInfo()
-        # Calculate the total area of the geometry
-        total_area = aoi_ee.area().getInfo()
-        # Compute the percentage of the geometry covered by non-NaN pixels
-        percentage_covered = (covered_area / total_area) * 100
-        print(percentage_covered)
-        return percentage_covered
-    def calculate_aoi_coverage_xr(im_xr, aoi_gdf):
-        # Clip the dataset to the geometry
-        im_xr_clipped = im_xr[dataset_dict[dataset]['RGB_bands'][0]].rio.clip(aoi_gdf.geometry)
-        # Mask out NaN values
-        im_xr_clipped_masked = im_xr_clipped.where(im_xr_clipped.notnull())
-        # Calculate the area of non-NaN pixels within the geometry
-        covered_area = im_xr_clipped_masked.sum(dim=['x', 'y']).sum().item() * (res**2)
-        # Calculate the total area of the geometry
-        total_area = aoi_gdf.geometry[0].area
-        # Compute the percentage of the geometry covered by non-NaN pixels
-        percentage_covered = (covered_area / total_area) * 100
-        return percentage_covered
-
     # -----Create xarray.Datasets from list of image IDs
     # loop through image IDs
     for i in tqdm(range(0, len(im_ids_list))):
@@ -1084,26 +1100,25 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
                                                        mask=mask_clouds,
                                                        region=region)
-                # check that image covers at least 70% of the AOI
-                percentage_covered = calculate_aoi_coverage_ee(im_composite.ee_image, region)
-                if percentage_covered >= 70:
-                    # download to file
-                    im_composite.download(os.path.join(im_out_path, im_fn),
-                                          region=region,
-                                          scale=res,
-                                          crs='EPSG:' + epsg_utm,
-                                          dtype='int16',
-                                          bands=im_composite.refl_bands)
-                else:
-                    if verbose:
-                        print('Image covers < 70% of the AOI, skipping...')
-                    continue
+                # download to file
+                im_composite.download(os.path.join(im_out_path, im_fn),
+                                      region=region,
+                                      scale=res,
+                                      crs='EPSG:' + epsg_utm,
+                                      dtype='int16',
+                                      bands=im_composite.refl_bands)
             # load image from file
             im_da = rxr.open_rasterio(os.path.join(im_out_path, im_fn))
             # convert to xarray.DataSet
             im_xr = im_da.to_dataset('band')
             band_names = list(dataset_dict[dataset]['refl_bands'].keys())
             im_xr = im_xr.rename({i + 1: name for i, name in enumerate(band_names)})
+            # check that image covered >= 70% of the AOI
+            percentage_covered = calculate_aoi_coverage(im_xr, aoi_utm, dataset_dict, dataset)
+            if percentage_covered < 70:
+                if verbose:
+                    print('Image covers < 70% of the AOI, skipping...')
+                continue
             # account for image scalar and no data values
             im_xr = xr.where(im_xr != dataset_dict[dataset]['no_data_value'],
                              im_xr / dataset_dict[dataset]['image_scalar'], np.nan)
@@ -1154,7 +1169,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
 
             # -----Check that image covers at least 70% of the AOI
-            percentage_covered = calculate_aoi_coverage_xr(im_xr, aoi_utm)
+            percentage_covered = calculate_aoi_coverage(im_xr, aoi_utm, dataset_dict, dataset)
             if percentage_covered >= 70:
 
                 # -----Run classification pipeline
@@ -1393,20 +1408,6 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
         print('Variable out_path must be specified to download images. Exiting...')
         return 'N/A'
 
-    # -----Define function to calculate percent coverage of the AOI
-    def calculate_aoi_coverage_xr(im_xr, aoi_gdf):
-        # Clip the dataset to the geometry
-        im_xr_clipped = im_xr[dataset_dict[dataset]['RGB_bands'][0]].rio.clip(aoi_gdf.geometry)
-        # Mask out NaN values
-        im_xr_clipped_masked = im_xr_clipped.where(im_xr_clipped.notnull())
-        # Calculate the area of non-NaN pixels within the geometry
-        covered_area = im_xr_clipped_masked.sum(dim=['x', 'y']).sum().item() * (res**2)
-        # Calculate the total area of the geometry
-        total_area = aoi_gdf.geometry[0].area
-        # Compute the percentage of the geometry covered by non-NaN pixels
-        percentage_covered = (covered_area / total_area) * 100
-        return percentage_covered
-
     # -----Create list of xarray.Datasets from list of image IDs
     im_xr_list = []  # initialize list of xarray.Datasets
     # loop through image IDs
@@ -1438,7 +1439,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                                                        mask=mask_clouds,
                                                        region=region)
                 # check that image covers at least 70% of the AOI
-                percentage_covered = calculate_aoi_coverage_xr(im_composite, aoi_utm)
+                percentage_covered = calculate_aoi_coverage(im_composite, aoi_utm, dataset_dict, dataset)
                 if percentage_covered >= 70:
                     # download to file
                     im_composite.download(os.path.join(im_out_path, im_fn),
@@ -1485,7 +1486,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 # set CRS
                 ims_xr_composite.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
                 # check that image covers at least 70% of the AOI
-                percentage_covered = calculate_aoi_coverage_xr(ims_xr_composite, aoi_utm)
+                percentage_covered = calculate_aoi_coverage(im_xr_composite, aoi_utm, dataset_dict, dataset)
                 if percentage_covered >= 70:
                     # append to list of xarray.Datasets
                     im_xr_list.append(ims_xr_composite) 
@@ -1505,7 +1506,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 # set CRS
                 im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
                 # check that image covers at least 70% of the AOI
-                percentage_covered = calculate_aoi_coverage_xr(im_xr, aoi_utm)
+                percentage_covered = calculate_aoi_coverage(im_xr, aoi_utm, dataset_dict, dataset)
                 if percentage_covered >= 70:
                     # append to list of xarray.Datasets
                     im_xr_list.append(im_xr)
@@ -1515,7 +1516,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
 
 # --------------------------------------------------
 def query_gee_for_image_thumbnail(dataset, dt, aoi_utm):
-    '''
+    """
 
     Parameters
     ----------
@@ -1532,7 +1533,7 @@ def query_gee_for_image_thumbnail(dataset, dt, aoi_utm):
         resulting image thumbnail
     bounds: numpy.array
         bounds of the image, derived from the aoi (minx, miny, maxx, maxy)
-    '''
+    """
 
     # -----Grab datetime from snowline df
     date_start = str(dt - np.timedelta64(1, 'D'))
