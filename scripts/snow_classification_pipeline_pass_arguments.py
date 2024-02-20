@@ -60,11 +60,12 @@ def getparser():
     parser.add_argument('-date_end', default=None, type=str, help='End date for image querying: "YYYY-MM-DD"')
     parser.add_argument('-month_start', default=None, type=int, help='Start month for image querying, e.g. 5')
     parser.add_argument('-month_end', default=None, type=int, help='End month for image querying, e.g. 10')
-    parser.add_argument('-cloud_cover_max', default=None, type=int, help='Max. cloud cover percentage in images, '
-                                                                         'e.g. 50 = 50% maximum cloud coverage')
     parser.add_argument('-mask_clouds', default=None, type=bool,
-                        help='Whether to mask clouds using the respective cloud '
-                             'cover masking product of each dataset')
+                        help='Whether to mask clouds using the respective cloud cover masking product of each dataset')
+    parser.add_argument('-cloud_cover_max', default=None, type=int, help='Max. cloud cover percentage' 
+                                                                         'in images (0-100)')
+    parser.add_argument('-aoi_coverage', default=None, type=int,
+                        help='Minimum percent coverage of the AOI after cloud masking (0-100)')
     parser.add_argument('-im_download', default=False, type=bool, help='Whether to download intermediary images. '
                                                                        'If im_download=False, but images over the AOI '
                                                                        'exceed the GEE limit, images must be '
@@ -99,8 +100,9 @@ def main():
     date_end = args.date_end
     month_start = args.month_start
     month_end = args.month_end
-    cloud_cover_max = args.cloud_cover_max
     mask_clouds = args.mask_clouds
+    cloud_cover_max = args.cloud_cover_max
+    aoi_coverage = args.aoi_coverage
     im_download = args.im_download
     steps_to_run = args.steps_to_run
     verbose = args.verbose
@@ -178,10 +180,9 @@ def main():
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end,
-                                             cloud_cover_max, mask_clouds, site_name, clf, feature_cols, s2_toa_im_path,
-                                             im_classified_path, snowlines_path, figures_out_path, plot_results,
-                                             verbose, im_download)
+                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
+                                             aoi_coverage, s2_toa_im_path, im_classified_path, snowlines_path,
+                                             figures_out_path, plot_results, verbose, im_download)
 
     # ------------------------ #
     # --- 2. Sentinel-2 SR --- #
@@ -203,10 +204,9 @@ def main():
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end,
-                                             cloud_cover_max, mask_clouds, site_name, clf, feature_cols, s2_sr_im_path,
-                                             im_classified_path, snowlines_path, figures_out_path, plot_results,
-                                             verbose, im_download)
+                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
+                                             aoi_coverage, s2_sr_im_path, im_classified_path, snowlines_path,
+                                             figures_out_path, plot_results, verbose, im_download)
 
     # ------------------------- #
     # --- 3. Landsat 8/9 SR --- #
@@ -228,10 +228,9 @@ def main():
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end,
-                                             cloud_cover_max, mask_clouds, site_name, clf, feature_cols, l_im_path,
-                                             im_classified_path, snowlines_path, figures_out_path, plot_results,
-                                             verbose, im_download)
+                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
+                                             aoi_coverage, l_im_path, im_classified_path, snowlines_path,
+                                             figures_out_path, plot_results, verbose, im_download)
 
     # ------------------------- #
     # --- 4. PlanetScope SR --- #
@@ -314,7 +313,7 @@ def main():
                 im_classified = im_classified.rio.reproject('EPSG:' + epsg_utm)
             else:
 
-                # -----Check that image mosaic covers at least 70% of the AOI
+                # -----Check that image mosaic covers at least aoi_coverage % of the AOI
                 # Create dummy band for AOI masking comparison
                 im_adj['aoi_mask'] = (
                 ['time', 'y', 'x'], np.ones(np.shape(im_adj[dataset_dict[dataset]['RGB_bands'][0]].data)))
@@ -323,9 +322,9 @@ def main():
                 perc_real_values_aoi = (
                             len(np.where(~np.isnan(np.ravel(im_aoi[dataset_dict[dataset]['RGB_bands'][0]].data)))[0])
                             / len(np.where(~np.isnan(np.ravel(im_aoi['aoi_mask'].data)))[0]))
-                if perc_real_values_aoi < 0.7:
+                if perc_real_values_aoi < aoi_coverage:
                     if verbose:
-                        print('Less than 70% coverage of the AOI, skipping image...')
+                        print(f'Less than {aoi_coverage}% coverage of the AOI, skipping image...')
                         print(' ')
                     continue
 

@@ -25,6 +25,7 @@ python snow_classification_pipeline_pass_arguments.py \
 -date_end "2023-12-01" \
 -month_start 5 \
 -month_end 10 \
--cloud_cover_max 70 \
 -mask_clouds True \
+-cloud_cover_max 70 \
+-aoi_coverage 70 \
 -steps_to_run 1 2 3
