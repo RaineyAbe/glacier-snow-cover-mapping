@@ -831,10 +831,10 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
 
 # --------------------------------------------------
 def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end,
-                                       month_start, month_end, cloud_cover_max, mask_clouds, site_name, clf,
-                                       feature_cols, im_out_path=None, im_classified_path=None, snowlines_path=None,
-                                       figures_out_path=None, plot_results=True, verbose=False,
-                                       im_download=False):
+                                       month_start, month_end, site_name, clf, feature_cols,
+                                       mask_clouds=True, cloud_cover_max=70, aoi_coverage=70, im_out_path=None,
+                                       im_classified_path=None, snowlines_path=None, figures_out_path=None,
+                                       plot_results=True, verbose=False, im_download=False):
     """
     Query Google Earth Engine for Landsat 8 and 9 surface reflectance (SR), Sentinel-2 top of atmosphere (TOA) or SR imagery.
     Images captured within the hour will be mosaicked. For each image, run the classification and snowline detection workflow.
@@ -858,16 +858,18 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
         starting month for calendar range filtering
     month_end: int
         ending month for calendar range filtering
-    cloud_cover_max: int
-        maximum image cloud cover percentage (0-100)
-    mask_clouds: bool
-        whether to mask clouds using geedim masking tools
     site_name: str
         name of study site
     clf: sklearn pre-trained model
         classifier applied to the input image, specific to image dataset
     feature_cols: list of str
         features (i.e., image bands and NDSI) to use for classifying
+    mask_clouds: bool
+        whether to mask clouds using geedim masking tools
+    cloud_cover_max: int or float
+        maximum image cloud cover percentage (0-100)
+    aoi_coverage: int or float
+        minimum percent coverage of the AOI after filtering clouds (0-100)
     im_out_path: str
         path where images will be saved if im_download = True
     im_classified_path: str
@@ -881,7 +883,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
     plot_results: bool
         whether to plot results and save figure
     verbose: bool
-
+        whether to output details about each image
     im_download: bool
         whether to download images. Folder for downloads (out_path) must be specified.
 
@@ -1123,17 +1125,17 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
             # set CRS
             im_xr.rio.write_crs('EPSG:' + str(im_da.rio.crs.to_epsg()), inplace=True)
 
-            # check that image covered >= 70% of the AOI
+            # check that image covered >= aoi_coverage % of the AOI
             percentage_covered = calculate_aoi_coverage(im_xr, aoi_utm)
-            if percentage_covered < 70:
+            if percentage_covered >= aoi_coverage:
+                # -----Run classification pipeline
+                apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
+                                              snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
+                                              figures_out_path, plot_results, verbose)
+            else:
                 if verbose:
-                    print('Image covers < 70% of the AOI, skipping...')
+                    print(f'Image covers < {aoi_coverage}% of the AOI, skipping...')
                 continue
-
-            # -----Run classification pipeline
-            apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                          snowlines_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
-                                          figures_out_path, plot_results, verbose)
 
         # if no image downloads necessary, use wxee
         else:
@@ -1171,7 +1173,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
 
             # -----Check that image covers at least 70% of the AOI
             percentage_covered = calculate_aoi_coverage(im_xr, aoi_utm)
-            if percentage_covered >= 70:
+            if percentage_covered >= aoi_coverage:
 
                 # -----Run classification pipeline
                 apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
@@ -1179,16 +1181,15 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                                               figures_out_path, plot_results, verbose)
             else:
                 if verbose:
-                    print('Image covers < 70% of the AOI, skipping...')
+                    print(f'Image covers < {aoi_coverage}% of the AOI, skipping...')
                 continue
 
     return
 
 
 # --------------------------------------------------
-def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
-                          month_start, month_end, cloud_cover_max, mask_clouds,
-                          im_out_path=None, im_download=False):
+def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, month_start, month_end,
+                          mask_clouds=True, cloud_cover_max=70, aoi_coverage=70, im_out_path=None, im_download=False):
     """
     Query Google Earth Engine for Landsat 8 and 9 surface reflectance (SR), Sentinel-2 top of atmosphere (TOA) or SR imagery.
     Images captured within the hour will be mosaicked. For each image, run the classification and snowline detection workflow.
@@ -1209,10 +1210,12 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
         starting month for calendar range filtering
     month_end: int
         ending month for calendar range filtering
-    cloud_cover_max: int
-        maximum image cloud cover percentage (0-100)
     mask_clouds: bool
         whether to mask clouds using geedim masking tools
+    cloud_cover_max: int
+        maximum image cloud cover percentage (0-100)
+    aoi_coverage: int or float
+        minimum percent coverage of the AOI after filtering clouds (0-100)
     im_out_path: str
         path where images will be saved if im_download = True
     im_download: bool
@@ -1488,7 +1491,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 ims_xr_composite.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
                 # check that image covers at least 70% of the AOI
                 percentage_covered = calculate_aoi_coverage(ims_xr_composite, aoi_utm)
-                if percentage_covered >= 70:
+                if percentage_covered >= aoi_coverage:
                     # append to list of xarray.Datasets
                     im_xr_list.append(ims_xr_composite) 
                 # append to list of xarray.Datasets
@@ -1508,7 +1511,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end,
                 im_xr.rio.write_crs('EPSG:' + epsg_utm, inplace=True)
                 # check that image covers at least 70% of the AOI
                 percentage_covered = calculate_aoi_coverage(im_xr, aoi_utm)
-                if percentage_covered >= 70:
+                if percentage_covered >= aoi_coverage:
                     # append to list of xarray.Datasets
                     im_xr_list.append(im_xr)
 
