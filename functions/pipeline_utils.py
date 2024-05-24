@@ -12,6 +12,7 @@ import geedim as gd
 import requests
 from shapely.geometry import MultiLineString, LineString, Point
 import os
+import glob
 import xarray as xr
 import numpy as np
 import rioxarray as rxr
@@ -358,8 +359,11 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
     im_classified_xr = im_classified_xr.expand_dims(dim={'time': [np.datetime64(im_date)]})
     # add additional attributes to image before saving
     im_classified_xr = im_classified_xr.assign_attrs({'Description': 'Classified image',
-                                                      'Classes': '1 = Snow, 2 = Shadowed snow, 4 = Ice, 5 = Rock, 6 = Water',
-                                                      'NoDataValues': '-9999'
+                                                      'Classes': '1 = Snow, 2 = Shadowed snow, 3 = Ice, 4 = Rock, '
+                                                                 '5 = Water',
+                                                      'source': dataset,
+                                                      'datetime': str(im_date)[0:19],
+                                                      '_FillValue': '-9999'
                                                       })
     # replace NaNs with -9999, convert data types to int
     im_classified_xr_int = im_classified_xr.fillna(-9999).astype(int)
@@ -586,19 +590,19 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     else:
         snowlines_coords_x = [[]]
         snowlines_coords_y = [[]]
-    snowline_df = pd.DataFrame({'site_name': [site_name],
+    snowline_df = pd.DataFrame({'RGIId': [site_name],
+                                'source': [dataset],
                                 'datetime': [im_date],
-                                'snowlines_coords_X': snowlines_coords_x,
-                                'snowlines_coords_Y': snowlines_coords_y,
                                 'HorizontalCRS': ['EPSG:' + str(im_classified.rio.crs.to_epsg())],
-                                'VerticalCRS': ['EGM96 geoid (EPSG:5773)'],
-                                'snowline_elevs_m': [snowline_elevs],
-                                'snowline_elevs_median_m': [median_snowline_elev],
+                                'VerticalCRS': ['EPSG:5773'],
                                 'SCA_m2': [sca],
                                 'AAR': [aar],
                                 'ELA_from_AAR_m': [ela_from_aar],
-                                'dataset': [dataset],
-                                'geometry': [snowline]
+                                'snowline_elevs_m': [snowline_elevs],
+                                'snowline_elevs_median_m': [median_snowline_elev],
+                                'snowlines_coords_X': snowlines_coords_x,
+                                'snowlines_coords_Y': snowlines_coords_y,
+                                # 'geometry': [snowline]
                                 })
 
     # -----Save snowline df to file
@@ -1073,6 +1077,21 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
         print('Variable out_path must be specified to download images. Exiting...')
         return 'N/A'
 
+    # -----Check if any images have already been classified, remove those
+    im_classified_fns = [os.path.basename(x) for x in
+                         sorted(glob.glob(os.path.join(im_classified_path, f'*{dataset}*_classified*')))]
+    ikeep = []
+    for i, date in enumerate(im_dts_list):
+        date_adj = str(np.datetime64(date[0]))
+        date_adj = str(date_adj).replace('-', '').replace(' ', 'T').replace(':', '')[0:15]
+        if any([(date_adj in fn) & (dataset in fn) for fn in im_classified_fns]) == False:
+            ikeep.append(i)
+        else:
+            if verbose:
+                print(f'Classified image for {date_adj} already in file, skipping...')
+    im_dts_list = [list(im_dts_list[i]) for i in ikeep]
+    im_ids_list = [list(im_ids_list[i]) for i in ikeep]
+
     # -----Create xarray.Datasets from list of image IDs
     # loop through image IDs
     for i in tqdm(range(0, len(im_ids_list))):
@@ -1173,6 +1192,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
 
             # -----Check that image covers at least 70% of the AOI
             percentage_covered = calculate_aoi_coverage(im_xr, aoi_utm)
+
             if percentage_covered >= aoi_coverage:
 
                 # -----Run classification pipeline
