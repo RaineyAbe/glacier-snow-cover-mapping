@@ -45,12 +45,12 @@ def getparser():
     parser = argparse.ArgumentParser(description="snow_classification_pipeline with arguments passed by the user",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-site_name', default=None, type=str, help='Name of study site')
-    parser.add_argument('-base_path', default=None, type=str, help='Path in directory to "snow-cover-mapping/"')
-    parser.add_argument('-aoi_path', default=None, type=str, help='Path in directory to area of interest shapefile')
-    parser.add_argument('-aoi_fn', default=None, type=str, help='Area of interest file name (.shp)')
+    parser.add_argument('-base_path', default=None, type=str, help='Path in directory to this code repository')
+    parser.add_argument('-aoi_path', default=None, type=str, help='Path in directory to area of interest geospatial file')
+    parser.add_argument('-aoi_fn', default=None, type=str, help='Area of interest file name')
     parser.add_argument('-dem_path', default=None, type=str,
                         help='(Optional) Path in directory to digital elevation model')
-    parser.add_argument('-dem_fn', default=None, type=str, help='(Optional) Digital elevation model file name (.shp)')
+    parser.add_argument('-dem_fn', default=None, type=str, help='(Optional) Digital elevation model file name')
     parser.add_argument('-out_path', default=None, type=str, help='Path in directory where output images will be saved')
     parser.add_argument('-ps_im_path', default=None, type=str, help='Path in directory where PlanetScope raw images '
                                                                     'are located')
@@ -58,22 +58,19 @@ def getparser():
                         help='Path in directory where figures will be saved')
     parser.add_argument('-date_start', default=None, type=str, help='Start date for image querying: "YYYY-MM-DD"')
     parser.add_argument('-date_end', default=None, type=str, help='End date for image querying: "YYYY-MM-DD"')
-    parser.add_argument('-month_start', default=None, type=int, help='Start month for image querying, e.g. 5')
-    parser.add_argument('-month_end', default=None, type=int, help='End month for image querying, e.g. 10')
-    parser.add_argument('-mask_clouds', default=None, type=bool,
-                        help='Whether to mask clouds using the respective cloud cover masking product of each dataset')
-    parser.add_argument('-cloud_cover_max', default=None, type=int, help='Max. cloud cover percentage' 
-                                                                         'in images (0-100)')
-    parser.add_argument('-aoi_coverage', default=None, type=int,
+    parser.add_argument('-month_start', default=1, type=int, help='Start month for image querying (inclusive), e.g. 5')
+    parser.add_argument('-month_end', default=12, type=int, help='End month for image querying (inclusive), e.g. 10')
+    parser.add_argument('-mask_clouds', default=True, type=bool, help='Whether to mask clouds in images.')
+    parser.add_argument('-aoi_coverage', default=70, type=int,
                         help='Minimum percent coverage of the AOI after cloud masking (0-100)')
     parser.add_argument('-im_download', default=False, type=bool, help='Whether to download intermediary images. '
-                                                                       'If im_download=False, but images over the AOI '
-                                                                       'exceed the GEE limit, images must be '
+                                                                       'If images clipped to the AOI exceed the GEE '
+                                                                       'user memory limit, images must be ' 
                                                                        'downloaded regardless.')
     parser.add_argument('-steps_to_run', default=None, nargs="+", type=int,
                         help='List of steps to be run, e.g. [1, 2, 3]. '
                              '1=Sentinel-2_TOA, 2=Sentinel-2_SR, 3=Landsat, 4=PlanetScope')
-    parser.add_argument('-verbose', action='store_true',
+    parser.add_argument('-verbose', default=True, type=bool,
                         help='Whether to print details for each image at each processing step.')
 
     return parser
@@ -101,7 +98,6 @@ def main():
     month_start = args.month_start
     month_end = args.month_end
     mask_clouds = args.mask_clouds
-    cloud_cover_max = args.cloud_cover_max
     aoi_coverage = args.aoi_coverage
     im_download = args.im_download
     steps_to_run = args.steps_to_run
@@ -109,7 +105,7 @@ def main():
 
     # -----Determine image clipping & plotting settings
     plot_results = True  # = True to plot figures of results for each image where applicable
-    skip_clipped = False  # = True to skip images where bands appear "clipped", i.e. max(blue) < 0.8
+    skip_clipped = False  # = True to skip PlanetScope images where bands appear "clipped", i.e. max(blue) < 0.8
     save_outputs = True  # = True to save SCAs and snowlines to file
 
     print(site_name)
@@ -122,7 +118,7 @@ def main():
     ps_im_masked_path = os.path.join(out_path, 'PlanetScope', 'masked')
     ps_im_mosaics_path = os.path.join(out_path, 'PlanetScope', 'mosaics')
     im_classified_path = os.path.join(out_path, 'classified')
-    snowlines_path = os.path.join(out_path, 'snowlines')
+    snow_cover_stats_path = os.path.join(out_path, 'snow_cover_stats')
 
     # -----Add path to functions
     sys.path.insert(1, os.path.join(base_path, 'functions'))
@@ -155,11 +151,13 @@ def main():
     else:
         # load DEM as xarray DataSet
         dem = xr.open_dataset(os.path.join(dem_path, dem_fn))
+        dem_crs = dem.rio.crs.to_epsg()
         dem = dem.rename({'band_data': 'elevation'})
         # set no data values to NaN
         dem = xr.where((dem > 1e38) | (dem <= -9999), np.nan, dem)
         # reproject the DEM to the optimal utm zone
-        dem = dem.rio.reproject('EPSG:' + str(epsg_utm)).rio.write_crs('EPSG:' + str(epsg_utm))
+        dem = dem.rio.write_crs(f'EPSG:{dem_crs}')
+        dem = dem.rio.reproject(f'EPSG:{epsg_utm}')
 
     # ------------------------- #
     # --- 1. Sentinel-2 TOA --- #
@@ -179,10 +177,12 @@ def main():
         feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_feature_columns.json')
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
-        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, s2_toa_im_path, im_classified_path, snowlines_path,
-                                             figures_out_path, plot_results, verbose, im_download)
+        run_pipeline = True
+        f.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
+                                       aoi_coverage, im_download, s2_toa_im_path, run_pipeline, dataset_dict, site_name,
+                                       im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
+                                       figures_out_path, plot_results, verbose)
+        print(' ')
 
     # ------------------------ #
     # --- 2. Sentinel-2 SR --- #
@@ -203,10 +203,12 @@ def main():
         feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_SR_feature_columns.json')
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
-        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, s2_sr_im_path, im_classified_path, snowlines_path,
-                                             figures_out_path, plot_results, verbose, im_download)
+        run_pipeline = True
+        f.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
+                                       aoi_coverage, im_download, s2_sr_im_path, run_pipeline, dataset_dict, site_name,
+                                       im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
+                                       figures_out_path, plot_results, verbose)
+        print(' ')
 
     # ------------------------- #
     # --- 3. Landsat 8/9 SR --- #
@@ -227,10 +229,12 @@ def main():
         feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Landsat_feature_columns.json')
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
-        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, l_im_path, im_classified_path, snowlines_path,
-                                             figures_out_path, plot_results, verbose, im_download)
+        run_pipeline = True
+        f.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
+                                       aoi_coverage, im_download, l_im_path, run_pipeline, dataset_dict, site_name,
+                                       im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
+                                       figures_out_path, plot_results, verbose)
+        print(' ')
 
     # ------------------------- #
     # --- 4. PlanetScope SR --- #
@@ -337,7 +341,7 @@ def main():
             # -----Delineate snowline(s)
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
-            if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
+            if os.path.exists(os.path.join(snow_cover_stats_path, snowline_fn)):
                 if verbose:
                     print('Snowline already exists in file, skipping...')
                     print(' ')
@@ -345,10 +349,10 @@ def main():
             else:
                 plot_results = True
                 snowline_df = f.delineate_snowline(im_classified, site_name, aoi_utm, dem, dataset_dict,
-                                                   dataset, im_date, snowline_fn, snowlines_path, figures_out_path,
+                                                   dataset, im_date, snowline_fn, snow_cover_stats_path, figures_out_path,
                                                    plot_results, im_adj, verbose)
                 if verbose:
-                    print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
+                    print('Accumulation Area Ratio =  ', snowline_df['AAR'][0])
             if verbose:
                 print(' ')
         print(' ')
