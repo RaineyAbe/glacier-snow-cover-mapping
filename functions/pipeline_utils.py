@@ -177,8 +177,8 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
         return ds
 
     # -----Define output image names, check if already exists in directory
-    arcticdem_fn = site_name + '_ArcticDEM_clip.tif'
     arcticdem_geoid_fn = site_name + '_ArcticDEM_clip_geoid.tif'
+    arcticdem_fn = site_name + '_ArcticDEM_clip.tif'
     nasadem_fn = site_name + '_NASADEM_clip.tif'
     if os.path.exists(os.path.join(out_path, arcticdem_geoid_fn)):
         print('Clipped ArcticDEM referenced to the geoid already exists in directory, loading...')
@@ -212,8 +212,8 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
 
         # -----Check for ArcticDEM coverage over AOI
         # load ArcticDEM_Mosaic_coverage.shp
-        arcticdem_coverage_fn = 'ArcticDEM_Mosaic_coverage.shp'
-        arcticdem_coverage = gpd.read_file(base_path + 'inputs-outputs/' + arcticdem_coverage_fn)
+        arcticdem_coverage_fn = os.path.join(base_path, 'inputs-outputs', 'ArcticDEM_Mosaic_coverage.shp')
+        arcticdem_coverage = gpd.read_file(arcticdem_coverage_fn)
         # reproject to optimal UTM zone
         arcticdem_coverage_utm = arcticdem_coverage.to_crs('EPSG:' + str(epsg_utm))
         # check for intersection with AOI
@@ -233,14 +233,14 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
             elevation_source = 'NASADEM (https://developers.google.com/earth-engine/datasets/catalog/NASA_NASADEM_HGT_001)'
 
         # -----Download DEM and open as xarray.Dataset
-        print('Downloading DEM to ' + out_path)
+        print('Downloading DEM to ', out_path)
         # create out_path if it doesn't exist
         if not os.path.exists(out_path):
             os.mkdir(out_path)
         # download DEM
-        dem.download(out_path + dem_fn, region=region, scale=res, crs="EPSG:4326")
+        dem.download(os.path.join(out_path, dem_fn), region=region, scale=res, crs="EPSG:4326")
         # read DEM as xarray.Dataset
-        dem_ds = xr.open_dataset(out_path + dem_fn)
+        dem_ds = xr.open_dataset(os.path.join(out_path, dem_fn))
         dem_ds = adjust_dem_data_vars(dem_ds)
 
         # -----If using ArcticDEM, transform elevations with respect to the geoid (rather than the ellipsoid)
@@ -352,19 +352,21 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
                                   attrs=im_aoi.attrs)
     # set coordinate reference system (CRS)
     im_classified_xr = im_classified_xr.rio.write_crs(im_xr.rio.crs)
-
+    
     # -----Prepare classified image for saving
     # add time dimension
     im_classified_xr = im_classified_xr.expand_dims(dim={'time': [np.datetime64(im_date)]})
     # add additional attributes to image before saving
     im_classified_xr = im_classified_xr.assign_attrs({'Description': 'Classified image',
                                                       'Classes': '1 = Snow, 2 = Shadowed snow, 4 = Ice, 5 = Rock, 6 = Water',
-                                                      'NoDataValues': '-9999'
+                                                      '_FillValue': '-9999'
                                                       })
     # replace NaNs with -9999, convert data types to int
-    im_classified_xr_int = im_classified_xr.fillna(-9999).astype(int)
+    im_classified_xr_int = im_classified_xr.copy(deep=True).astype(np.int8)
+    im_classified_xr_int = xr.where(np.isnan(im_classified_xr.classified), -9999, im_classified_xr_int)
     # reproject to WGS84 horizontal coordinates for consistency before saving
-    im_classified_xr_int = im_classified_xr_int.rio.reproject('EPSG:4326')
+    im_classified_xr_int = im_classified_xr_int.rio.write_crs(im_classified_xr.rio.crs)
+    im_classified_xr_int = im_classified_xr_int.rio.reproject('EPSG:4326', nodata=-9999)
 
     # -----Save to file
     if '.nc' in im_classified_fn:
@@ -372,7 +374,7 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
     elif '.tif' in im_classified_fn:
         im_classified_xr_int.rio.to_raster(os.path.join(out_path, im_classified_fn))
     if verbose:
-        print('Classified image saved to file: ' + os.path.join(out_path, im_classified_fn))
+        print('Classified image saved to file: ', os.path.join(out_path, im_classified_fn))
 
     return im_classified_xr
 
@@ -424,12 +426,12 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     # -----Make directory for snowlines (if it does not already exist)
     if not os.path.exists(out_path):
         os.mkdir(out_path)
-        print("Made directory for snowlines:" + out_path)
+        print("Made directory for snowlines:", out_path)
 
     # -----Make directory for figures (if it does not already exist)
     if (not os.path.exists(figures_out_path)) & plot_results:
         os.mkdir(figures_out_path)
-        print('Made directory for output figures: ' + figures_out_path)
+        print('Made directory for output figures: ', figures_out_path)
 
     # -----Subset dataset_dict to dataset
     ds_dict = dataset_dict[dataset]
@@ -449,16 +451,16 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
 
     # -----Clip DEM to AOI and interpolate to classified image coordinates
     dem_aoi = dem.rio.clip(aoi.geometry, aoi.crs)
-    dem_aoi = xr.where(dem_aoi < 3e38, dem_aoi, np.nan)
+    dem_aoi = xr.where(np.abs(dem_aoi) < 3e38, dem_aoi, np.nan)
     dem_aoi_interp = dem_aoi.interp(x=im_classified.x.data, y=im_classified.y.data, method='linear')
-    dem_aoi_interp = xr.where(dem_aoi_interp < 3e38, dem_aoi_interp, np.nan)
+    dem_aoi_interp = xr.where(np.abs(dem_aoi_interp) < 3e38, dem_aoi_interp, np.nan)
     # add elevation as a band to classified image for convenience
     im_classified['elevation'] = (('y', 'x'), dem_aoi_interp.elevation.data)
 
     # -----Determine snow covered elevations
     all_elev = np.ravel(dem_aoi_interp.elevation.data)
     all_elev = all_elev[~np.isnan(all_elev)]  # remove NaNs
-    snow_est_elev = np.ravel(im_classified.where((im_classified.classified <= 2))
+    snow_est_elev = np.ravel(im_classified.where((im_classified.classified == 1) | (im_classified.classified==2))
                              .where(im_classified.classified != -9999).elevation.data)
     snow_est_elev = snow_est_elev[~np.isnan(snow_est_elev)]  # remove NaNs
 
@@ -702,7 +704,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
         fig_fn = os.path.join(figures_out_path, title + '.png')
         fig.savefig(fig_fn, dpi=300, facecolor='white', edgecolor='none')
         if verbose:
-            print('Figure saved to file:' + fig_fn)
+            print('Figure saved to file:', fig_fn)
 
     return snowline_df
 

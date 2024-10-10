@@ -18,7 +18,7 @@ from shapely.geometry import Polygon, MultiPolygon
 import xarray as xr
 
 
-def planetscope_mask_image_pixels(im_path, im_fn, out_path, save_outputs, plot_results):
+def planetscope_mask_image_pixels(im_path, im_fn, out_path, save_outputs=True, plot_results=True):
     """
     Mask PlanetScope 4-band image pixels using the Usable Data Mask (UDM) file associated with each image.
 
