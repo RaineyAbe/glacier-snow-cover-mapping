@@ -1,11 +1,11 @@
 # duplicate the slurm_snowlines_SITE-ID.bash file and save with new site ID
 
 old_id = "SITE-ID"
-new_ids = ["01.16342", "01.17183", "01.17348", "01.17423", "01.15788",
-           "01.14883", "01.15769", "01.12425", "01.12635", "01.13696"]
+new_ids = ["01.00032", "01.00033", "01.00037", "01.00038", "01.00046", 
+           "01.00312", "01.00566", "01.00570", "01.00576", "01.00675"]
 
 # Load input file
-input_fn = "slurm_RGI60-SITE-ID.bash"
+input_fn = "/Users/raineyaberle/Research/PhD/snow_cover_mapping/snow-cover-mapping/scripts/slurm_RGI60-SITE-ID.bash"
 with open(input_fn, "r") as input_file:
     content = input_file.read()
 

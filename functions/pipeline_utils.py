@@ -29,7 +29,6 @@ import wxee as wx
 import rasterio as rio
 
 
-# --------------------------------------------------
 def convert_wgs_to_utm(lon: float, lat: float):
     """
     Return best UTM epsg-code based on WGS84 lat and lon coordinate pair
@@ -56,7 +55,6 @@ def convert_wgs_to_utm(lon: float, lat: float):
     return epsg_code
 
 
-# --------------------------------------------------
 def plot_xr_rgb_image(im_xr, rgb_bands):
     """Plot RGB image of xarray.DataSet
 
@@ -106,7 +104,6 @@ def plot_xr_rgb_image(im_xr, rgb_bands):
     return fig, ax
 
 
-# --------------------------------------------------
 def adjust_dem_data_vars(dem):
     """
 
@@ -129,7 +126,6 @@ def adjust_dem_data_vars(dem):
     return dem
 
 
-# --------------------------------------------------
 def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     """
     Query GEE for the ArcticDEM Mosaic (where there is coverage) or the NASADEM,
@@ -197,18 +193,9 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     else:  # if no DEM exists in directory, load from GEE
 
         # -----Reformat AOI for clipping DEM
-        aoi_utm_buffer = aoi_utm.copy(deep=True)
-        aoi_utm_buffer.geometry[0] = aoi_utm_buffer.geometry[0].buffer(1000)
-        aoi_utm_buffer = aoi_utm_buffer.to_crs('EPSG:4326')
-        region = {'type': 'Polygon',
-                  'coordinates': [[
-                      [aoi_utm_buffer.geometry.bounds.minx[0], aoi_utm_buffer.geometry.bounds.miny[0]],
-                      [aoi_utm_buffer.geometry.bounds.maxx[0], aoi_utm_buffer.geometry.bounds.miny[0]],
-                      [aoi_utm_buffer.geometry.bounds.maxx[0], aoi_utm_buffer.geometry.bounds.maxy[0]],
-                      [aoi_utm_buffer.geometry.bounds.minx[0], aoi_utm_buffer.geometry.bounds.maxy[0]],
-                      [aoi_utm_buffer.geometry.bounds.minx[0], aoi_utm_buffer.geometry.bounds.miny[0]]
-                  ]]
-                  }
+        aoi_wgs = aoi_utm.to_crs("EPSG:4326")
+        region = ee.Geometry.Polygon(list(zip(aoi_wgs.geometry[0].exterior.coords.xy[0], 
+                                              aoi_wgs.geometry[0].exterior.coords.xy[1])))
 
         # -----Check for ArcticDEM coverage over AOI
         # load ArcticDEM_Mosaic_coverage.shp
@@ -231,6 +218,9 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
             dem_fn = nasadem_fn  # file name for saving
             res = 30  # spatial resolution [m]
             elevation_source = 'NASADEM (https://developers.google.com/earth-engine/datasets/catalog/NASA_NASADEM_HGT_001)'
+        
+        # -----Clip to exact region (otherwise, it's a bounding box region)
+        dem.ee_image = dem.ee_image.clip(region)
 
         # -----Download DEM and open as xarray.Dataset
         print('Downloading DEM to ', out_path)
@@ -255,7 +245,6 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
     return dem_ds
 
 
-# --------------------------------------------------
 def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_classified_fn, out_path, verbose=False):
     """
     Function to classify image collection using a pre-trained classifier
@@ -379,7 +368,6 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
     return im_classified_xr
 
 
-# --------------------------------------------------
 def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset, im_date, snowline_fn,
                        out_path, figures_out_path, plot_results, im_xr=None, verbose=False):
     """
@@ -621,7 +609,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
 
     # -----Plot results
     if plot_results:
-        fig, ax = plt.subplots(1, 3, figsize=(18, 6))
+        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
         # define x and y limits
         xmin, xmax = aoi.geometry[0].buffer(100).bounds[0] / 1e3, aoi.geometry[0].buffer(100).bounds[2] / 1e3
         ymin, ymax = aoi.geometry[0].buffer(100).bounds[1] / 1e3, aoi.geometry[0].buffer(100).bounds[3] / 1e3
@@ -682,22 +670,11 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
         ax[0].set_ylim(ymin, ymax)
         ax[1].set_xlim(xmin, xmax)
         ax[1].set_ylim(ymin, ymax)
-        # normalized snow elevations histogram
-        ax[2].bar(bin_centers, hist_snow_est_elev_norm, width=(bin_centers[1] - bin_centers[0]), color=colors[0],
-                  align='center')
-        ax[2].plot([median_snowline_elev, median_snowline_elev], [0, 1], '-', color='#f768a1',
-                   linewidth=3, label='Median snowline elevation')
-        ax[2].set_xlabel("Elevation [m]")
-        ax[2].set_ylabel("Fraction snow-covered")
-        ax[2].grid()
-        ax[2].set_xlim(elev_min - 10, elev_max + 10)
-        ax[2].set_ylim(0, 1)
         # determine figure title and file name
-        title = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snow-cover'
+        title = f"{im_date.replace('-','').replace(':','')}_{site_name}_{dataset}_snow_cover"
         # add legends
         ax[0].legend(loc='lower right')
         ax[1].legend(loc='lower right')
-        ax[2].legend(loc='lower right')
         fig.suptitle(title)
         fig.tight_layout()
         # save figure
@@ -709,7 +686,6 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     return snowline_df
 
 
-# --------------------------------------------------
 def calculate_aoi_coverage(im_xr, aoi_gdf):
     """
     Calculate the percentage of the AOI covered by the image
@@ -742,7 +718,6 @@ def calculate_aoi_coverage(im_xr, aoi_gdf):
 
     return percent_coverage
 
-# --------------------------------------------------
 def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path, snowlines_path,
                                   aoi_utm, dem, epsg_utm, clf, feature_cols, figures_out_path,
                                   plot_results, verbose):
@@ -817,7 +792,7 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
             return
 
     # Check if snowline already exists in file
-    snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
+    snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snow_cover_stats.csv'
     if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
         # No need to load snowline if it already exists
         return
@@ -831,7 +806,6 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
     return snowline_df
 
 
-# --------------------------------------------------
 def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end,
                                        month_start, month_end, site_name, clf, feature_cols,
                                        mask_clouds=True, cloud_cover_max=70, aoi_coverage=70, im_out_path=None,
@@ -901,13 +875,8 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
     # reproject CRS from AOI to WGS
     aoi_wgs = aoi_utm.to_crs('EPSG:4326')
     # prepare AOI for querying geedim (AOI bounding box)
-    region = {'type': 'Polygon',
-              'coordinates': [[[aoi_wgs.geometry.bounds.minx[0], aoi_wgs.geometry.bounds.miny[0]],
-                               [aoi_wgs.geometry.bounds.maxx[0], aoi_wgs.geometry.bounds.miny[0]],
-                               [aoi_wgs.geometry.bounds.maxx[0], aoi_wgs.geometry.bounds.maxy[0]],
-                               [aoi_wgs.geometry.bounds.minx[0], aoi_wgs.geometry.bounds.maxy[0]],
-                               [aoi_wgs.geometry.bounds.minx[0], aoi_wgs.geometry.bounds.miny[0]]
-                               ]]}
+    region = ee.Geometry.Polygon(list(zip(aoi_wgs.geometry[0].exterior.coords.xy[0],
+                                          aoi_wgs.geometry[0].exterior.coords.xy[1])))
 
     # -----Define function to query GEE for imagery
     def query_gee(dataset, date_start, date_end, region, cloud_cover_max, mask_clouds):
@@ -1104,6 +1073,8 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 im_composite = im_collection.composite(method=gd.CompositeMethod.q_mosaic,
                                                        mask=mask_clouds,
                                                        region=region)
+                # clip to exact region (otherwise, it's a bounding box region)
+                im_composite.ee_image = im_composite.ee_image.clip(region)
                 # download to file
                 im_composite.download(os.path.join(im_out_path, im_fn),
                                       region=region,
@@ -1147,7 +1118,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 # create list of MaskedImages from IDs
                 ims_gd = [gd.MaskedImage.from_id(im_id, mask=mask_clouds, region=region) for im_id in im_ids]
                 # convert to list of ee.Images
-                ims_ee = [ee.Image(im_gd.ee_image).select(im_gd.refl_bands) for im_gd in ims_gd]
+                ims_ee = [ee.Image(im_gd.ee_image).select(im_gd.refl_bands).clip(region) for im_gd in ims_gd]
                 # convert to xarray.Datasets
                 ims_xr = [im_ee.wx.to_xarray(scale=res, region=region, crs='EPSG:' + epsg_utm) for im_ee in ims_ee]
                 # composite images
@@ -1163,7 +1134,7 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
                 # create MaskedImage from ID
                 im_gd = gd.MaskedImage.from_id(im_ids[0], mask=mask_clouds, region=region)
                 # convert to ee.Image
-                im_ee = ee.Image(im_gd.ee_image).select(im_gd.refl_bands)
+                im_ee = ee.Image(im_gd.ee_image).select(im_gd.refl_bands).clip(region)
                 # convert to xarray.Datasets
                 im_xr = im_ee.wx.to_xarray(scale=res, region=region, crs='EPSG:' + epsg_utm)
                 # account for image scalar
@@ -1189,7 +1160,6 @@ def query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date
     return
 
 
-# --------------------------------------------------
 def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, month_start, month_end,
                           mask_clouds=True, cloud_cover_max=70, aoi_coverage=70, im_out_path=None, im_download=False):
     """
@@ -1520,7 +1490,6 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, date_start, date_end, 
     return im_xr_list
 
 
-# --------------------------------------------------
 def query_gee_for_image_thumbnail(dataset, dt, aoi_utm):
     """
 
@@ -1633,7 +1602,6 @@ def query_gee_for_image_thumbnail(dataset, dt, aoi_utm):
     return image, bounds
 
 
-# --------------------------------------------------
 def reduce_memory_usage(df, verbose=True):
     """
     Reduce memory usage in pandas.DataFrame

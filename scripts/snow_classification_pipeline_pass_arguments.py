@@ -122,7 +122,7 @@ def main():
     ps_im_masked_path = os.path.join(out_path, 'PlanetScope', 'masked')
     ps_im_mosaics_path = os.path.join(out_path, 'PlanetScope', 'mosaics')
     im_classified_path = os.path.join(out_path, 'classified')
-    snowlines_path = os.path.join(out_path, 'snowlines')
+    stats_path = os.path.join(out_path, 'snow_cover_stats')
 
     # -----Add path to functions
     sys.path.insert(1, os.path.join(base_path, 'functions'))
@@ -181,7 +181,7 @@ def main():
         # Run the classification pipeline
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
                                              month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, s2_toa_im_path, im_classified_path, snowlines_path,
+                                             aoi_coverage, s2_toa_im_path, im_classified_path, stats_path,
                                              figures_out_path, plot_results, verbose, im_download)
 
     # ------------------------ #
@@ -205,7 +205,7 @@ def main():
         # Run the classification pipeline
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
                                              month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, s2_sr_im_path, im_classified_path, snowlines_path,
+                                             aoi_coverage, s2_sr_im_path, im_classified_path, stats_path,
                                              figures_out_path, plot_results, verbose, im_download)
 
     # ------------------------- #
@@ -229,7 +229,7 @@ def main():
         # Run the classification pipeline
         f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
                                              month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, l_im_path, im_classified_path, snowlines_path,
+                                             aoi_coverage, l_im_path, im_classified_path, stats_path,
                                              figures_out_path, plot_results, verbose, im_download)
 
     # ------------------------- #
@@ -337,7 +337,7 @@ def main():
             # -----Delineate snowline(s)
             # check if snowline already exists in file
             snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
-            if os.path.exists(os.path.join(snowlines_path, snowline_fn)):
+            if os.path.exists(os.path.join(stats_path, snowline_fn)):
                 if verbose:
                     print('Snowline already exists in file, skipping...')
                     print(' ')
@@ -345,7 +345,7 @@ def main():
             else:
                 plot_results = True
                 snowline_df = f.delineate_snowline(im_classified, site_name, aoi_utm, dem, dataset_dict,
-                                                   dataset, im_date, snowline_fn, snowlines_path, figures_out_path,
+                                                   dataset, im_date, snowline_fn, stats_path, figures_out_path,
                                                    plot_results, im_adj, verbose)
                 if verbose:
                     print('Accumulation Area Ratio =  ' + str(snowline_df['AAR'][0]))
