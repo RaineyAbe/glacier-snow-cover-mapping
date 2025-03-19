@@ -25,17 +25,19 @@ Outline:
 # ----------------- #
 
 # -----Import packages
+import argparse
 import xarray as xr
 import os
-import numpy as np
 import glob
+import numpy as np
+from matplotlib import pyplot as plt
 import geopandas as gpd
 import sys
 import ee
 import json
 from tqdm.auto import tqdm
 from joblib import load
-import argparse
+from shapely.geometry import MultiPolygon, Polygon
 import warnings
 
 warnings.simplefilter("ignore")
@@ -107,7 +109,8 @@ def main():
     steps_to_run = args.steps_to_run
     verbose = args.verbose
 
-    # -----Determine image clipping & plotting settings
+    # -----Determine some settings
+    run_pipeline = True # = True to run the snow detection pipeline one downloading images
     plot_results = True  # = True to plot figures of results for each image where applicable
     skip_clipped = False  # = True to skip images where bands appear "clipped", i.e. max(blue) < 0.8
     save_outputs = True  # = True to save SCAs and snowlines to file
@@ -134,7 +137,7 @@ def main():
     dataset_dict = json.load(open(dataset_dict_fn))
 
     # -----Authenticate and initialize GEE
-    ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
+    ee.Initialize()
 
     # -----Load AOI as gpd.GeoDataFrame
     aoi = gpd.read_file(os.path.join(aoi_path, aoi_fn))
@@ -179,10 +182,10 @@ def main():
         feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_TOA_feature_columns.json')
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
-        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, s2_toa_im_path, im_classified_path, stats_path,
-                                             figures_out_path, plot_results, verbose, im_download)
+        f.query_gee_for_imagery(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start, month_end, 
+                                mask_clouds, cloud_cover_max, aoi_coverage, run_pipeline, site_name, 
+                                clf, feature_cols, im_download, s2_toa_im_path, im_classified_path, 
+                                stats_path, figures_out_path, plot_results, verbose)
 
     # ------------------------ #
     # --- 2. Sentinel-2 SR --- #
@@ -203,10 +206,10 @@ def main():
         feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Sentinel-2_SR_feature_columns.json')
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
-        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, s2_sr_im_path, im_classified_path, stats_path,
-                                             figures_out_path, plot_results, verbose, im_download)
+        f.query_gee_for_imagery(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start, month_end, 
+                                mask_clouds, cloud_cover_max, aoi_coverage, run_pipeline, site_name, 
+                                clf, feature_cols, im_download, s2_sr_im_path, im_classified_path, 
+                                stats_path, figures_out_path, plot_results, verbose)
 
     # ------------------------- #
     # --- 3. Landsat 8/9 SR --- #
@@ -227,10 +230,10 @@ def main():
         feature_cols_fn = os.path.join(base_path, 'inputs-outputs', 'Landsat_feature_columns.json')
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
-        f.query_gee_for_imagery_run_pipeline(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start,
-                                             month_end, site_name, clf, feature_cols, mask_clouds, cloud_cover_max,
-                                             aoi_coverage, l_im_path, im_classified_path, stats_path,
-                                             figures_out_path, plot_results, verbose, im_download)
+        f.query_gee_for_imagery(dataset_dict, dataset, aoi_utm, dem, date_start, date_end, month_start, month_end, 
+                                mask_clouds, cloud_cover_max, aoi_coverage, run_pipeline, site_name, 
+                                clf, feature_cols, im_download, l_im_path, im_classified_path, 
+                                stats_path, figures_out_path, plot_results, verbose)
 
     # ------------------------- #
     # --- 4. PlanetScope SR --- #
