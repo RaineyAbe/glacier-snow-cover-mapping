@@ -5,7 +5,7 @@ Rainey Aberle
 """
 
 import numpy as np
-import pandas as import pd
+import pandas as pd
 import glob
 import rioxarray as rxr
 import xarray as xr
