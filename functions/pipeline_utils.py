@@ -172,6 +172,8 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
         
         # -----Clip to exact region (otherwise, it's a bounding box region)
         dem.ee_image = dem.ee_image.clip(region)
+        #add a quality control check to the ArcticDEM to make sure it isn't wonky, then download NASADEM instead
+        #problems include lots of empty pixels or strange blockiness so check for empties and also number of unique values
 
         # -----Download DEM and open as xarray.Dataset
         print('Downloading DEM to ', out_path)
