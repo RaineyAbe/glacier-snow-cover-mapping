@@ -1050,7 +1050,7 @@ def query_gee_for_imagery(dataset_dict, dataset, aoi_utm, dem, date_start, date_
 
     # Iterate over date ranges
     print('Iterating over date ranges')
-    for date_range in date_ranges[0:1]:
+    for date_range in date_ranges:
         print(f"\n{date_range}")
 
         # Get image IDs
