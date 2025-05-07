@@ -1,4 +1,4 @@
-name: glacier-snow-cover-mapping
+name: gscm_env
 channels:
   - defaults
   - conda-forge
@@ -7,16 +7,15 @@ dependencies:
   - geedim=1.7.1
   - planet=2.0.1
   - scikit-learn=1.2.2
+  - contextily
+  - geemap
   - geopandas
-  - rioxarray
+  - h5netcdf
+  - ipywidgets
   - jupyterlab
   - matplotlib
-  - seaborn
-  - scikit-image
-  - ipywidgets
-  - contextily
   - netcdf4
-  - h5netcdf
-  - dask
-  - pip:
-    - wxee
+  - rioxarray
+  - scikit-image
+  - seaborn
+  - wxee
