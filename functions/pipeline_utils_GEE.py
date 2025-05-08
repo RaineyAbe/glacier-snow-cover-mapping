@@ -37,7 +37,7 @@ def query_gee_for_dem(aoi):
     intersects = arcticdem_coverage.geometry().intersects(aoi).getInfo()
     if intersects:        
         # make sure there's data (some areas are have empty or patchy coveraage even though they're within the ArcticDEM coverage geometry)
-        dem = ee.Image("UMN/PGC/ArcticDEM/V3/2m_mosaic").clip(aoi)
+        dem = ee.Image("UMN/PGC/ArcticDEM/V4/2m_mosaic").clip(aoi)
         dem_area = dem.mask().multiply(ee.Image.pixelArea()).reduceRegion(
             reducer=ee.Reducer.sum(),
             geometry=aoi,
@@ -435,16 +435,15 @@ def calculate_snow_cover_statistics(image_collection, dem, aoi, scale=30,
     statistics = ee.FeatureCollection(image_collection.map(process_image))
 
     # Export to Google Drive folder
-    description = os.path.basename(file_name_prefix)
     task = ee.batch.Export.table.toDrive(
         collection=statistics, 
-        description=description, 
+        description=file_name_prefix, 
         folder=out_folder, 
         fileNamePrefix=file_name_prefix, 
         fileFormat='CSV', 
         )
     task.start()
-    print('Exporting snow cover statistics to Google Drive folder with description:', description)
+    print(f'Exporting snow cover statistics to {out_folder} Google Drive folder with file name: {file_name_prefix}')
     print('To monitor tasks, go to your GEE Task Manager: https://code.earthengine.google.com/tasks')
 
     return statistics

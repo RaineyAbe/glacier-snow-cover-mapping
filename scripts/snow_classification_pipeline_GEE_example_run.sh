@@ -13,7 +13,7 @@
 # Run snow classification pipeline - modify arguments before running
 python snow_classification_pipeline_GEE.py \
 -code_path "/Users/raineyaberle/Research/PhD/snow_cover_mapping/glacier-snow-cover-mapping/" \
--out_path "snow_cover_exports" \
+-out_folder "snow_cover_exports" \
 -project_id "ee-raineyaberle" \
 -glac_id "G211100E60420N" \
 -date_start "2020-06-01" \
@@ -22,4 +22,4 @@ python snow_classification_pipeline_GEE.py \
 -month_end 11 \
 -mask_clouds True \
 -min_aoi_coverage 70 \
--steps_to_run 1
+-steps_to_run 2

@@ -1,12 +1,10 @@
 name: gscm_env
 channels:
   - conda-forge
-  - pkgs/main
+  - defaults
 dependencies:
-  - contextily
   - geedim=1.7.1
   - geemap
-  - geetools
   - geopandas
   - h5netcdf
   - ipywidgets
@@ -18,5 +16,4 @@ dependencies:
   - rioxarray
   - scikit-image
   - scikit-learn=1.2.2
-  - seaborn
   - wxee

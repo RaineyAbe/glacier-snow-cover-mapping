@@ -29,7 +29,7 @@ def getparser():
     parser = argparse.ArgumentParser(description="snow_classification_pipeline with arguments passed by the user",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-code_path', default=None, type=str, help='Path in directory to this code repository')
-    parser.add_argument('-out_path', default=None, type=str, help='Path in directory where output images will be saved')
+    parser.add_argument('-out_folder', default=None, type=str, help='Path in directory where output images will be saved')
     parser.add_argument('-project_id', default=None, type=str, help='Google Earth Engine project ID, managed on your account.')
     parser.add_argument('-glac_id', default=None, type=str, help="GLIMS glacier ID used to query and clip imagery.")
     parser.add_argument('-date_start', default=None, type=str, help='Start date for image querying: "YYYY-MM-DD"')
@@ -51,7 +51,7 @@ def main():
     parser = getparser()
     args = parser.parse_args()
     code_path = args.code_path
-    out_path = args.out_path
+    out_folder = args.out_folder
     project_id = args.project_id
     glac_id = args.glac_id
     date_start = args.date_start
@@ -111,8 +111,8 @@ def main():
             classified_collection = utils.classify_image_collection(image_collection, dataset)
 
             # Calculate snow cover statistics, export to Google Drive
-            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
-                                                        file_name_prefix=os.path.join(out_path, f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}"))
+            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, out_folder=out_folder,
+                                                          file_name_prefix=f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}")
 
     # ------------------------ #
     # --- 2. Sentinel-2 SR --- #
@@ -139,8 +139,8 @@ def main():
             classified_collection = utils.classify_image_collection(image_collection, dataset)
 
             # Calculate snow cover statistics, export to Google Drive
-            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
-                                                        file_name_prefix=os.path.join(out_path, f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}"))
+            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, out_folder=out_folder,
+                                                        file_name_prefix=f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}")
 
 
     # ------------------------- #
@@ -168,8 +168,8 @@ def main():
             classified_collection = utils.classify_image_collection(image_collection, dataset)
 
             # Calculate snow cover statistics, export to Google Drive
-            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
-                                                        file_name_prefix=os.path.join(out_path, f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}"))
+            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, out_folder=out_folder,
+                                                          file_name_prefix=f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}")
 
 
     print('Done!')

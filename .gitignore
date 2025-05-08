@@ -8,7 +8,7 @@
 figures/
 
 # .zip folders of study area shapefiles
-Inputs-outputs/*.zip
+inputs-outputs/*.zip
 
 # PyCharm files
 .idea*
