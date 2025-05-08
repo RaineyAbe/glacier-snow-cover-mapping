@@ -1,21 +1,16 @@
 """
-Functions for running the snow classification pipeline on the Google Earth Engine (GEE) side.
+Functions for running the snow classification workflow on the Google Earth Engine (GEE) server side.
 Rainey Aberle
 2025
 """
 
 import ee
 import geedim as gd
-import geemap
-import geetools
-import numpy as np
+import datetime
 import os
-import pandas as pd
-import wxee as wx
-import xarray as xr
-from datetime import datetime
+import numpy as np
 
-current_datetime = datetime.now()
+current_datetime = datetime.datetime.now()
 current_datetime_str = str(current_datetime).replace(' ','').replace(':','').replace('-','').replace('.','')
 
 def query_gee_for_dem(aoi):
@@ -25,12 +20,12 @@ def query_gee_for_dem(aoi):
 
     Parameters
     ----------
-    aoi : ee.Geometry
+    aoi: ee.Geometry
         Area of interest (AOI) to query for DEM.
     
     Returns
     ----------
-    dem : ee.Image
+    dem: ee.Image
         Digital elevation model (DEM) image.
     """
     
@@ -41,7 +36,7 @@ def query_gee_for_dem(aoi):
     arcticdem_coverage = ee.FeatureCollection('projects/ee-raineyaberle/assets/glacier-snow-cover-mapping/ArcticDEM_Mosaic_coverage')
     intersects = arcticdem_coverage.geometry().intersects(aoi).getInfo()
     if intersects:        
-        # make sure there's data (some areas are empty even though they're within the ArcticDEM coverage geometry)
+        # make sure there's data (some areas are have empty or patchy coveraage even though they're within the ArcticDEM coverage geometry)
         dem = ee.Image("UMN/PGC/ArcticDEM/V3/2m_mosaic").clip(aoi)
         dem_area = dem.mask().multiply(ee.Image.pixelArea()).reduceRegion(
             reducer=ee.Reducer.sum(),
@@ -51,14 +46,13 @@ def query_gee_for_dem(aoi):
             bestEffort=True
             ).get('elevation')
         dem_percent_coverage = ee.Number(dem_area).divide(ee.Number(aoi.area())).multiply(100).getInfo()
+        print(f"ArcticDEM coverage = {int(dem_percent_coverage)} %")
         if dem_percent_coverage >= 90:
             dem_name = "ArcticDEM Mosaic"
-            dem_string = "UMN/PGC/ArcticDEM/V3/2m_mosaic"
-            print('ArcticDEM coverage >= 90%')
+            dem_string = "UMN/PGC/ArcticDEM/V4/2m_mosaic"
         else:
             dem_name = "NASADEM"
             dem_string = "NASA/NASADEM_HGT/001"
-            print('ArcticDEM coverage < 90%')
         
     # Otherwise, use NASADEM
     else:
@@ -69,9 +63,63 @@ def query_gee_for_dem(aoi):
 
     # Get the DEM, clip to AOI
     dem = ee.Image(dem_string).select('elevation').clip(aoi)
-    dem.set({'source': dem_name})
+
+    # Reproject to the EGM96 geoid if using ArcticDEM
+    if dem_name=='ArcticDEM Mosaic':
+        geoid = ee.Image('projects/ee-raineyaberle/assets/glacier-snow-cover-mapping/us_nga_egm96_15')
+        dem = dem.subtract(geoid)
+    dem = dem.set({'vertical_datum': 'EGM96 geoid'})
 
     return dem
+
+
+def split_date_range_by_year(date_start, date_end, month_start, month_end):
+    """
+    Split a date range into smaller ranges by year. Date and month ranges are inclusive. 
+
+    Parameters
+    ----------
+    date_start: str
+        Start date for the image search in the format 'YYYY-MM-DD'.
+    date_end: str
+        End date for the image search in the format 'YYYY-MM-DD'.
+    month_start: int
+        Start month for the image search (1-12).
+    month_end: int
+        End month for the image search (1-12).
+
+    Returns
+    ----------
+    ranges: list
+        List of tuples containing the start and end dates for each year in the range.
+    """
+    # Convert date strings to datetime format
+    date_start = datetime.datetime.strptime(date_start, "%Y-%m-%d").date()
+    date_end = datetime.datetime.strptime(date_end, "%Y-%m-%d").date()
+    
+    # Identify start and end dates
+    year_start = date_start.year
+    year_end = date_end.year
+    
+    # Iterate over years
+    ranges = []
+    for year in range(year_start, year_end + 1):
+        # Construct the start and end dates for this year
+        start = datetime.date(year, month_start, 1)
+        # Determine the last day of the end month
+        if month_end == 12:
+            end = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1)
+        else:
+            end = datetime.date(year, month_end + 1, 1) - datetime.timedelta(days=1)
+        
+        # Clip to the overall date_start and date_end
+        start = max(start, date_start)
+        end = min(end, date_end)
+        
+        if start <= end:
+            ranges.append((start.isoformat(), end.isoformat()))
+    
+    return ranges
 
 
 def query_gee_for_imagery(dataset, aoi, date_start, date_end, month_start, month_end, fill_portion, mask_clouds):
@@ -81,31 +129,31 @@ def query_gee_for_imagery(dataset, aoi, date_start, date_end, month_start, month
 
     Parameters
     ----------
-    dataset : str
+    dataset: str
         Name of the dataset to query for. Options are 'Landsat', 'Sentinel-2_SR', or 'Sentinel-2_TOA'.
-    aoi : ee.Geometry
+    aoi: ee.Geometry
         Area of interest (AOI) to query for imagery.
-    date_start : str
+    date_start: str
         Start date for the image search in the format 'YYYY-MM-DD'.
-    date_end : str
+    date_end: str
         End date for the image search in the format 'YYYY-MM-DD'.
-    month_start : int
+    month_start: int
         Start month for the image search (1-12).
-    month_end : int
+    month_end: int
         End month for the image search (1-12).
-    fill_portion : float
+    fill_portion: float
         Minimum percent coverage of the AOI required for an image to be included in the collection (0-100).
-    mask_clouds : bool
+    mask_clouds: bool
         Whether to mask clouds in the imagery. If True, clouds will be masked using the dataset's cloud mask. 
         If False, no cloud masking will be applied.
     
     Returns
     ----------
-    im_mosaics : ee.ImageCollection
+    im_mosaics: ee.ImageCollection
         Image collection of pre-processed, clipped images that meet the search criteria. 
     """
 
-    print(f'\nQuerying GEE for {dataset} image collection')
+    print(f'Querying GEE for {dataset} image collection')
 
     # Define image collection
     if dataset=='Landsat':
@@ -217,18 +265,18 @@ def classify_image_collection(collection, dataset):
 
     Parameters
     ----------
-    collection : ee.ImageCollection
+    collection: ee.ImageCollection
         Image collection to classify.
-    dataset : str
+    dataset: str
         Name of the dataset used for classification. Options are 'Landsat', 'Sentinel-2_SR', or 'Sentinel-2_TOA'.
 
     Returns
     ----------
-    classified_collection : ee.ImageCollection
+    classified_collection: ee.ImageCollection
         Classified image collection.
     """
 
-    print('\nClassifying image collection')
+    print('Classifying image collection')
 
     # Retrain classifier
     if dataset=='Landsat':
@@ -263,13 +311,13 @@ def calculate_snow_cover_statistics(image_collection, dem, aoi, scale=30,
 
     Parameters
     ----------
-    image_collection : ee.ImageCollection
+    image_collection: ee.ImageCollection
         Image collection to calculate statistics for.
-    dem : ee.Image
+    dem: ee.Image
         Digital elevation model (DEM) image to use for SLA calculations.
-    aoi : ee.Geometry
+    aoi: ee.Geometry
         Area of interest (AOI) to calculate statistics for.
-    scale : int
+    scale: int
         Scale to use for calculations (default is 30m).
     out_folder: str
         Name of Google Drive Folder where statistics will be saved as CSV.
@@ -278,11 +326,11 @@ def calculate_snow_cover_statistics(image_collection, dem, aoi, scale=30,
     
     Returns
     ----------
-    statistics : ee.FeatureCollection
+    statistics: ee.FeatureCollection
         Feature collection of snow cover statistics for each image in the collection.
     """
 
-    print('\nCalculating snow cover statistics')
+    print('Calculating snow cover statistics')
 
     def process_image(image):
         # Grab the image date
@@ -383,19 +431,20 @@ def calculate_snow_cover_statistics(image_collection, dem, aoi, scale=30,
 
         return feature
     
-    # Process each image in the collection
+    # Calculate statistics for each image in collection
     statistics = ee.FeatureCollection(image_collection.map(process_image))
 
     # Export to Google Drive folder
+    description = os.path.basename(file_name_prefix)
     task = ee.batch.Export.table.toDrive(
         collection=statistics, 
-        description=file_name_prefix, 
+        description=description, 
         folder=out_folder, 
         fileNamePrefix=file_name_prefix, 
         fileFormat='CSV', 
         )
     task.start()
-    print('Exporting snow cover statistics to Google Drive folder with description:', file_name_prefix)
+    print('Exporting snow cover statistics to Google Drive folder with description:', description)
     print('To monitor tasks, go to your GEE Task Manager: https://code.earthengine.google.com/tasks')
 
     return statistics

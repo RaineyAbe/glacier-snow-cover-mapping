@@ -82,6 +82,11 @@ def main():
     # -----Load the DEM
     dem = utils.query_gee_for_dem(aoi)
 
+    # -----Split the date range into separate years
+    # If the GEE computations take too long (> ~12 h), the final export times out. 
+    # Splitting the date range and running each separately helps to mitigate time-out. 
+    date_ranges = utils.split_date_range_by_year(date_start, date_end, month_start, month_end)
+
     # ------------------------- #
     # --- 1. Sentinel-2 TOA --- #
     # ------------------------- #
@@ -94,16 +99,20 @@ def main():
         dataset = "Sentinel-2_TOA"
         resolution = 10
 
-        # Query GEE for imagery
-        image_collection = utils.query_gee_for_imagery(dataset, aoi, date_start, date_end, month_start, month_end, 
-                                                    min_aoi_coverage, mask_clouds)
+        # Run the workflow for each year in the date range separately 
+        for date_range in date_ranges:
+            print('\n', date_range)
 
-        # Classify image collection
-        classified_collection = utils.classify_image_collection(image_collection, dataset)
+            # Query GEE for imagery
+            image_collection = utils.query_gee_for_imagery(dataset, aoi, date_range[0], date_range[1], month_start, month_end, 
+                                                        min_aoi_coverage, mask_clouds)
 
-        # Calculate snow cover statistics, export to Google Drive
-        stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
-                                                      file_name_prefix=f"{glac_id}_{dataset}_snow_cover_stats_{date_start}_{date_end}")
+            # Classify image collection
+            classified_collection = utils.classify_image_collection(image_collection, dataset)
+
+            # Calculate snow cover statistics, export to Google Drive
+            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
+                                                        file_name_prefix=os.path.join(out_path, f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}"))
 
     # ------------------------ #
     # --- 2. Sentinel-2 SR --- #
@@ -118,16 +127,20 @@ def main():
         dataset = "Sentinel-2_SR"
         resolution = 10
 
-        # Query GEE for imagery
-        image_collection = utils.query_gee_for_imagery(dataset, aoi, date_start, date_end, month_start, month_end, 
-                                                    min_aoi_coverage, mask_clouds)
+        # Run the workflow for each year in the date range separately 
+        for date_range in date_ranges:
+            print('\n', date_range)
 
-        # Classify image collection
-        classified_collection = utils.classify_image_collection(image_collection, dataset)
+            # Query GEE for imagery
+            image_collection = utils.query_gee_for_imagery(dataset, aoi, date_range[0], date_range[1], month_start, month_end, 
+                                                        min_aoi_coverage, mask_clouds)
 
-        # Calculate snow cover statistics, export to Google Drive
-        stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
-                                                    file_name_prefix=f"{glac_id}_{dataset}_snow_cover_stats_{date_start}_{date_end}")
+            # Classify image collection
+            classified_collection = utils.classify_image_collection(image_collection, dataset)
+
+            # Calculate snow cover statistics, export to Google Drive
+            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
+                                                        file_name_prefix=os.path.join(out_path, f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}"))
 
 
     # ------------------------- #
@@ -143,16 +156,20 @@ def main():
         dataset = "Landsat"
         resolution = 30
 
-        # Query GEE for imagery
-        image_collection = utils.query_gee_for_imagery(dataset, aoi, date_start, date_end, month_start, month_end, 
-                                                    min_aoi_coverage, mask_clouds)
+        # Run the workflow for each year in the date range separately 
+        for date_range in date_ranges:
+            print('\n', date_range)
 
-        # Classify image collection
-        classified_collection = utils.classify_image_collection(image_collection, dataset)
+            # Query GEE for imagery
+            image_collection = utils.query_gee_for_imagery(dataset, aoi, date_range[0], date_range[1], month_start, month_end, 
+                                                        min_aoi_coverage, mask_clouds)
 
-        # Calculate snow cover statistics, export to Google Drive
-        stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
-                                                    file_name_prefix=f"{glac_id}_{dataset}_snow_cover_stats_{date_start}_{date_end}")
+            # Classify image collection
+            classified_collection = utils.classify_image_collection(image_collection, dataset)
+
+            # Calculate snow cover statistics, export to Google Drive
+            stats = utils.calculate_snow_cover_statistics(classified_collection, dem, aoi, scale=resolution, 
+                                                        file_name_prefix=os.path.join(out_path, f"{glac_id}_{dataset}_snow_cover_stats_{date_range[0]}_{date_range[1]}"))
 
 
     print('Done!')

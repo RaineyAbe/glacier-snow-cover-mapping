@@ -155,14 +155,14 @@ def query_gee_for_dem(aoi_utm, base_path, site_name, out_path=None):
         # check for actual coverage of ArcticDEM (some sites have nearly empty DEM coverage even within data boundaries)
         coverage = False
         if intersects:
-            dem = ee.Image('UMN/PGC/ArcticDEM/V3/2m_mosaic').clip(aoi_ee).select('elevation')
+            dem = ee.Image('UMN/PGC/ArcticDEM/V4/2m_mosaic').clip(aoi_ee).select('elevation')
             percent_coverage = calculate_percent_image_aoi_coverage(dem).get('percent_AOI_coverage').getInfo()
             if percent_coverage > 70:
                 coverage = True
         # use ArcticDEM if intersects==True and coverage==True
         if intersects & coverage:
             print('ArcticDEM coverage over AOI')
-            dem = ee.Image('UMN/PGC/ArcticDEM/V3/2m_mosaic').select('elevation').clip(aoi_ee)
+            dem = ee.Image('UMN/PGC/ArcticDEM/V4/2m_mosaic').select('elevation').clip(aoi_ee)
             dem_fn = arcticdem_fn  # file name for saving
             scale = 10  # spatial resolution [m]
             elevation_source = 'ArcticDEM Mosaic (https://developers.google.com/earth-engine/datasets/catalog/UMN_PGC_ArcticDEM_V3_2m_mosaic)'

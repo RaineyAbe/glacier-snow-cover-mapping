@@ -125,7 +125,7 @@ def main():
 
     # -----Add path to functions
     sys.path.insert(1, os.path.join(code_path, 'functions'))
-    import pipeline_utils as f
+    import pipeline_utils_SKL as f
     import PlanetScope_preprocessing as psp
 
     # -----Load dataset dictionary
