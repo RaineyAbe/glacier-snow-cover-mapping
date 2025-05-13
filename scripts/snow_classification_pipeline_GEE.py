@@ -28,7 +28,6 @@ import argparse
 def getparser():
     parser = argparse.ArgumentParser(description="snow_classification_pipeline with arguments passed by the user",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-code_path', default=None, type=str, help='Path in directory to this code repository')
     parser.add_argument('-out_folder', default=None, type=str, help='Path in directory where output images will be saved')
     parser.add_argument('-project_id', default=None, type=str, help='Google Earth Engine project ID, managed on your account.')
     parser.add_argument('-glac_id', default=None, type=str, help="GLIMS glacier ID used to query and clip imagery.")
@@ -50,7 +49,6 @@ def main():
     # -----Set user arguments as variables
     parser = getparser()
     args = parser.parse_args()
-    code_path = args.code_path
     out_folder = args.out_folder
     project_id = args.project_id
     glac_id = args.glac_id
@@ -63,7 +61,13 @@ def main():
     steps_to_run = args.steps_to_run
 
     # -----Import pipeline utilities
-    sys.path.append(os.path.join(code_path, 'functions'))
+    # When running locally, must import from "functions" folder
+    script_path = os.path.dirname(os.path.abspath(__file__))
+    if "functions" in os.listdir(os.path.join(script_path, '..')):
+        sys.path.append(os.path.join(script_path, '..', 'functions'))
+    # In Docker image, all files are in "/app" folder
+    else:
+        sys.path.append(os.path.join(script_path))
     import pipeline_utils_GEE as utils
 
     # -----Authenticate and initialize GEE
