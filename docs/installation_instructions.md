@@ -30,7 +30,7 @@ ee.Authenticate(auth_mode='notebook')
 
 Then follow the instructions to authenticate when prompted. This will save an authorization token on your Borah account, and you should be able to initialize Earth Engine without authenticating in future script runs. 
 
-See the `scripts/slurm_GEE_example.bash` file for an example slurm job submission. 
+See the `scripts/slurm_GEE_example.bash` and `scripts/slurm_SKL_example.bash` files for an example slurm job submission. 
 
 ## Docker users
 
