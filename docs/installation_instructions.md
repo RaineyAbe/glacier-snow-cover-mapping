@@ -21,7 +21,7 @@ fi
 Before you run a script for the first time, you will need to authenticate your Google Earth Engine account. To do this, run Python in the container: 
 
 ```
-apptainer $FILE python # or replace $FILE with "glacier-snow-cover-mapping_latest.sif" if it is no longer defined
+apptainer run $FILE python # or replace $FILE with "glacier-snow-cover-mapping_latest.sif" if it is no longer defined
 
 # Once in the Python shell
 import ee
