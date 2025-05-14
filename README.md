@@ -1,8 +1,8 @@
 # glacier-snow-cover-mapping
 
-[Rainey Aberle](https://github.com/RaineyAbe) and [Ellyn Enderlin](https://github.com/ellynenderlin), Department of Geosciences, Boise State University
+[Rainey Aberle](https://github.com/RaineyAbe), [Ellyn Enderlin](https://github.com/ellynenderlin), and [Jukes Liu](https://github.com/jukesliu)
 
-Thank you to [Jukes Liu](https://github.com/jukesliu) for their contributions to the PlanetScope image download and processing steps.
+Department of Geosciences, Boise State University
 
 ## Correspondence
 Rainey Aberle (raineyaberle@u.boisestate.edu)
