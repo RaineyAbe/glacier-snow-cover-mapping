@@ -19,7 +19,7 @@ else
 fi
 
 # Define site name here for convenience
-SITE_NAME="RGI60-SITE_ID"
+SITE_NAME="RGI60-SITE-ID"
 
 # Run the pipeline in the container - CHANGE "GLAC_ID" TO YOUR GLIMS GLAC_ID
 apptainer exec $FILE \
