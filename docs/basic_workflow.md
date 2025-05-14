@@ -44,4 +44,4 @@ See the notebook for more detailed instructions.
 #### Script version:
 - Open a new command window, navigate (`cd`) to `glacier-snow-cover-mapping/scripts` and activate the Conda/Mamba environment (if using). 
 - Run the pipeline with the following command: `python glacier_snow_cover_mapping_XXX.py **args` (replace "XXX" with "GEE" or "SKL")
-- See the script file for descriptions of the required and optional input arguments, or run `help(glacier_snow_cover_mapping_XXX.py)`
+- See the script file for descriptions of the required and optional input arguments, or run `help(snow_classification_pipeline_XXX.py)`
