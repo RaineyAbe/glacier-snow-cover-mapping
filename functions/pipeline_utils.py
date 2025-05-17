@@ -521,7 +521,7 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
     im_classified_xr = im_classified_xr.expand_dims(dim={'time': [np.datetime64(im_date)]})
     # add additional attributes to image before saving
     im_classified_xr = im_classified_xr.assign_attrs({'Description': 'Classified image',
-                                                      'Classes': '1 = Snow, 2 = Shadowed snow, 4 = Ice, 5 = Rock, 6 = Water',
+                                                      'Classes': '1 = Snow, 2 = Shadowed snow, 3 = Ice, 4 = Rock, 5 = Water',
                                                       '_FillValue': '-9999'
                                                       })
     # replace NaNs with -9999, convert data types to int
