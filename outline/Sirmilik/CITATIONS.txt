@@ -1,0 +1,41 @@
+This file contains the citations for the data downloaded from the GLIMS
+Glacier Database.  All data are in the longitude/latitude coordinate system
+on the WGS-84 datum.
+
+Field names in the downloaded file are documented at
+  http://www.glims.org/MapsAndDocs/downloaded_field_desc.html
+
+When citing GLIMS data, please be sure to include all the information in
+the examples below, including the analyst's name.
+
+When referring to the GLIMS Initiative in general, please cite
+
+   Raup, B.H.; A. Racoviteanu; S.J.S. Khalsa; C. Helm; R. Armstrong; Y.
+   Arnaud (2007).  "The GLIMS Geospatial Glacier Database: a New Tool for
+   Studying Glacier Change".  Global and Planetary Change 56:101--110.
+   (doi:10.1016/j.gloplacha.2006.07.018)
+
+For the complete set of GLIMS glacier data (when using it for a global
+study of glaciers, for example), please cite
+
+    GLIMS Consortium, 2005. GLIMS Glacier Database, Version 1.
+    Boulder Colorado, USA.  NASA National Snow and Ice Data Center Distributed
+    Active Archive Center.  DOI: https://doi.org/10.7265/N5V98602  [Date
+    accessed].
+
+Specific citations for subsets of your download, by provider, are
+as follows:
+
+
+    GLIMS Consortium, 2005. GLIMS Glacier Database, Version 1.
+    [Analysis_IDs 297535--304956, Bolch, Tobias (submitter); Barrand, Nick; Burgess, Dave; Cawkwell, Fiona; Copland, Luke; Filbert, Katie; Gardner, Alex; Hartmann, G; OCallaghan, P; Paul, Frank; Sharp, Martin; Wolken, G.; Wyatt, F. (analyst(s))].
+    Boulder, Colorado, USA. NASA National Snow and Ice
+    Data Center Distributed Active Archive Center.
+    DOI: http://dx.doi.org/10.7265/N5V98602  [Date accessed]
+
+    GLIMS Consortium, 2005. GLIMS Glacier Database, Version 1.
+    [Analysis_IDs 1017829--1028736, Paul, Frank (submitter); Mabileau, Laure; Paul, Frank; Rastner, Philipp (analyst(s))].
+    Boulder, Colorado, USA. NASA National Snow and Ice
+    Data Center Distributed Active Archive Center.
+    DOI: http://dx.doi.org/10.7265/N5V98602  [Date accessed]
+
