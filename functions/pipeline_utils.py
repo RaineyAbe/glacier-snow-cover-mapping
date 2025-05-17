@@ -276,7 +276,7 @@ def get_image_ids(dataset, region, date_start, date_end, cloud_cover_max):
                        .filterDate(date_start, date_end)
                        .filter(ee.Filter.lt('CLOUD_COVER', cloud_cover_max))
                        )
-        im_col_ee_9 = (ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+        im_col_ee_9 = (ee.ImageCollection('LANDSAT/LC09/C02/T1_L2') # <---- NEW
                        .filterBounds(region)
                        .filterDate(date_start, date_end)
                        .filter(ee.Filter.lt('CLOUD_COVER', cloud_cover_max))
