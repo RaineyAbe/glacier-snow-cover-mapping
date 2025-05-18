@@ -662,7 +662,7 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
 
     # -----Delineate snow lines
     # create binary snow matrix
-    im_binary = xr.where(im_classified_adj > 2, 1, 0).classified.data
+    im_binary = xr.where((im_classified_adj.classified == 1) | (im_classified_adj.classified == 2), 1, 0)
     # fill holes in binary image (0s within 1s = 1)
     im_binary_no_holes = binary_fill_holes(im_binary)
     # find contours at a constant value of 0.5 (between 0 and 1)
@@ -740,6 +740,78 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
     elevations = np.ravel(dem_clip.elevation.data)
     ela_from_aar = np.nanquantile(elevations, 1 - aar)
 
+    # -----Calculate Snow Cover Ratio (SCR) <-- added by Wilson Cheung April 2025
+    total_snow_pixels = len(np.ravel(im_classified.classified.data[(im_classified.classified.data <= 2)]))
+    total_ice_pixels = len(np.ravel(im_classified.classified.data[im_classified.classified.data == 3]))
+
+    SCR = total_snow_pixels / (total_snow_pixels + total_ice_pixels)
+
+    # -----Calculate the snowline elevation using the bin method
+    # ----- Define elevation bins (20 m intervals)
+    elev_min = np.floor(np.nanmin(dem_clip.elevation.data) / 10) * 10
+    elev_max = np.ceil(np.nanmax(dem_clip.elevation.data) / 10) * 10
+    bin_edges = np.arange(elev_min, elev_max + 10, 10)
+
+    # Reproject DEM to match classified image
+    dem_clip_bin = dem_clip.interp(x=im_classified.x, y=im_classified.y, method='linear')
+
+    # ----- Initialize SCR calculation per elevation bin
+    SCR_per_bin = []
+
+    for i in range(len(bin_edges) - 1):
+        bin_lower, bin_upper = bin_edges[i], bin_edges[i + 1]
+        # Mask for pixels within current elevation bin
+        elev_mask = (dem_clip_bin.elevation.data >= bin_lower) & (dem_clip_bin.elevation.data < bin_upper)
+        
+        # Count snow/shadow pixels in bin
+        snow_pixels = np.sum(elev_mask & ((im_classified.classified.data == 1) | (im_classified.classified.data == 2)))
+        
+        # Count ice pixels in bin
+        ice_pixels = np.sum(elev_mask & (im_classified.classified.data == 3))
+        
+        # Compute SCR for bin
+        total_pixels = snow_pixels + ice_pixels
+        if total_pixels > 0:
+            bin_SCR = snow_pixels / total_pixels
+        else:
+            bin_SCR = np.nan  # No data pixels
+        
+        SCR_per_bin.append(bin_SCR)
+
+    SCR_per_bin = np.array(SCR_per_bin)
+
+    # ----- Identify the first sequence of at least 3 consecutive bins with SCR >= 0.8
+    valid_sequence_found = False
+    for idx in range(len(SCR_per_bin) - 2):
+        if np.all(SCR_per_bin[idx:idx+3] >= 0.8):
+            valid_sequence_found = True
+            snowline_bin_lower = bin_edges[idx]
+            snowline_bin_upper = bin_edges[idx + 1]
+            break
+
+    # If no sequence found, select the lowest elevation bin with SCR >= 0.8
+    if not valid_sequence_found:
+        valid_bins = np.where(SCR_per_bin >= 0.8)[0]
+        if len(valid_bins) > 0:
+            lowest_valid_bin_idx = valid_bins[0]
+            snowline_bin_lower = bin_edges[lowest_valid_bin_idx]
+            snowline_bin_upper = bin_edges[lowest_valid_bin_idx + 1]
+        else:
+            snowline_bin_lower = np.nan
+            snowline_bin_upper = np.nan
+
+    # ----- Set Snowline Altitude (SLA) as the average of bin bounds
+    if not np.isnan(snowline_bin_lower):
+        SLA_bin_method = (snowline_bin_lower + snowline_bin_upper) / 2
+    else:
+        SLA_bin_method = np.nan  # No valid snowline identified
+
+
+
+
+
+
+
     # -----Compile results in dataframe
     # calculate median snow line elevation
     median_snowline_elev = np.nanmedian(snowline_elevs)
@@ -752,19 +824,21 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
         snowlines_coords_y = [[]]
     snowline_df = pd.DataFrame({'site_name': [site_name],
                                 'datetime': [im_date],
-                                'snowlines_coords_X': snowlines_coords_x,
-                                'snowlines_coords_Y': snowlines_coords_y,
+                                'dataset': [dataset],
                                 'HorizontalCRS': ['EPSG:' + str(im_classified.rio.crs.to_epsg())],
                                 'VerticalCRS': ['EGM96 geoid (EPSG:5773)'],
-                                'snowline_elevs_m': [snowline_elevs],
-                                'snowline_elevs_median_m': [median_snowline_elev],
+                                'SCR': [SCR],  # Newly added Snow Cover Ratio
+                                'SLA_bin_method_m': [SLA_bin_method],  # Added SLA from bin method
                                 'SCA_m2': [sca],
                                 'AAR': [aar],
                                 'ELA_from_AAR_m': [ela_from_aar],
-                                'dataset': [dataset],
+                                'snowline_elevs_m': [snowline_elevs],
+                                'snowline_elevs_median_m': [median_snowline_elev], 
+                                'snowlines_coords_X': snowlines_coords_x,
+                                'snowlines_coords_Y': snowlines_coords_y,
                                 'geometry': [snowline]
                                 })
-
+    
     # -----Save snowline df to file
     # reduce memory storage of dataframe
     snowline_df = reduce_memory_usage(snowline_df, verbose=False)
@@ -847,8 +921,8 @@ def delineate_snowline(im_classified, site_name, aoi, dem, dataset_dict, dataset
         # determine figure title and file name
         title = f"{im_date.replace('-','').replace(':','')}_{site_name}_{dataset}_snow_cover"
         # add legends
-        ax[0].legend(loc='lower right')
-        ax[1].legend(loc='lower right')
+        ax[0].legend(loc='best')
+        ax[1].legend(loc='best')
         fig.suptitle(title)
         fig.tight_layout()
         # save figure
