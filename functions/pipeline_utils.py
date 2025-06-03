@@ -746,18 +746,17 @@ def calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_classified, de
 
     # -----Compile results in dataframe
     scs_df = pd.DataFrame({'RGIId': [site_name],
-                            'source': [dataset],
-                            'datetime': [im_dt],
-                            'HorizontalCRS': [f'EPSG:{im_classified.rio.crs.to_epsg()}'],
-                            'VerticalCRS': ['EPSG:5773'],
-                            'snow_area_m2': [snow_area],
-                            'ice_area_m2': [ice_area],
-                            'rock_area_m2': [rock_area],
-                            'water_area_m2': [water_area],
-                            'glacier_area_m2': [glacier_area],
-                            'transient_AAR': [aar],
-                            'SLA_m': [sla_from_aar],
-                            })
+                           'source': [dataset],
+                           'HorizontalCRS': [f'EPSG:{im_classified.rio.crs.to_epsg()}'],
+                           'VerticalCRS': ['EPSG:5773'],
+                           'snow_area_m2': [snow_area],
+                           'ice_area_m2': [ice_area],
+                           'rock_area_m2': [rock_area],
+                           'water_area_m2': [water_area],
+                           'glacier_area_m2': [glacier_area],
+                           'transient_AAR': [aar],
+                           'SLA_m': [sla_from_aar],
+                           })
     
     # -----Delineate snowline
     if delineate_snowline:
@@ -1093,7 +1092,7 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
 
     Returns
     -------
-    snowline_df: pandas.DataFrame
+    scs_df: pandas.DataFrame
         resulting data table containing snow cover statistics and snowline geometry
     """
     # Grab image date string from time variable
@@ -1122,12 +1121,12 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
         im_classified = im_classified.rio.write_crs('EPSG:4326').rio.reproject(f'EPSG:{epsg_utm}')
 
         # Calculate snow cover stats
-        snowline_df = calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_classified, dem, aoi_utm, 
-                                                 site_name, delineate_snowline, snow_cover_stats_fn, snow_cover_stats_path, 
-                                                 figures_out_path, plot_results, verbose)
+        scs_df = calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_classified, dem, aoi_utm, 
+                                            site_name, delineate_snowline, snow_cover_stats_fn, snow_cover_stats_path, 
+                                            figures_out_path, plot_results, verbose)
         plt.close()
 
-    return snowline_df
+    return scs_df
 
 
 def query_gee_for_image_thumbnail(dataset, dt, aoi_utm):
@@ -1278,12 +1277,7 @@ def reduce_memory_usage(df, verbose=True):
                 elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
                     df[col] = df[col].astype(np.int64)
             else:
-                #                if (
-                #                    c_min > np.finfo(np.float16).min
-                #                    and c_max < np.finfo(np.float16).max
-                #                ):
-                #                    df[col] = df[col].astype(np.float16) # float16 not compatible with linalg
-                if (  # elif (
+                if (
                         c_min > np.finfo(np.float32).min
                         and c_max < np.finfo(np.float32).max
                 ):

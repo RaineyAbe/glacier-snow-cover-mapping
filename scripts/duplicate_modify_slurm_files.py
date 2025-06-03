@@ -8,7 +8,7 @@ new_ids = ["01.00032", "01.00033", "01.00037", "01.00038", "01.00046", "01.00312
            "01.08412", "01.08427", "01.09148", "01.09162", "01.09216", "01.09411", "01.09639"]
 
 # Load input file
-input_fn = "slurm_RGI60-SITE-ID.bash"
+input_fn = "slurm_example_SITE-ID.bash"
 with open(input_fn, "r") as input_file:
     content = input_file.read()
 
@@ -19,7 +19,7 @@ for new_id in new_ids:
     new_content = content.replace(old_id, new_id)
 
     # Define output file name
-    output_fn = input_fn.replace(old_id, new_id)
+    output_fn = input_fn.replace('example_SITE-ID', 'RGI60-'+new_id)
 
     # Open the input file for writing
     with open(output_fn, "w") as output_file:

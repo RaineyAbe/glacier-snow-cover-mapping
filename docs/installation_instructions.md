@@ -30,7 +30,7 @@ ee.Authenticate(auth_mode='notebook')
 
 Then follow the instructions to authenticate when prompted. This will save an authorization token on your Borah account, and you should be able to initialize Earth Engine without authenticating in future script runs. 
 
-See the `scripts/slurm_GEE_example.bash` and `scripts/slurm_SKL_example.bash` files for an example slurm job submission. 
+See the `scripts/slurm_example_SITE_ID.bash` file for an example slurm job submission. 
 
 ## Docker users
 
@@ -40,7 +40,7 @@ Pull the image from Docker Hub:
 
 ## Mamba / Conda users
 
-For managing the required Python packages, we recommend downloading either [Anaconda/Miniconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html) or [Mamba/Micromamba](https://mamba.readthedocs.io/en/latest/index.html). This will allow you to install the environment directly using the `.yml` file. See the online user guides for [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) or [Mamba](https://mamba.readthedocs.io/en/latest/user_guide/mamba.html) if you are unfamiliar. If using Mamba, replace all instances of `conda` below with `mamba`.
+For managing the required Python packages, you can install [Anaconda/Miniconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html) or [Mamba/Micromamba](https://mamba.readthedocs.io/en/latest/index.html). This will allow you to install the environment using the `.yml` file. See the online user guides for [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) or [Mamba](https://mamba.readthedocs.io/en/latest/user_guide/mamba.html) if you are unfamiliar. If using Mamba, replace all instances of `conda` below with `mamba`.
 
 ### (Optional) Fork repository for personal use
 To save a copy of the code for personal use, fork the `glacier-snow-cover-mapping` code repository to your personal GitHub account. See [this page](https://docs.github.com/en/get-started/quickstart/fork-a-repo) for instructions on how to fork a GitHub repository.
