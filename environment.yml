@@ -1,4 +1,4 @@
-name: gscm_env
+name: gscm
 channels:
   - conda-forge
   - defaults

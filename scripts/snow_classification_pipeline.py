@@ -37,6 +37,7 @@ import json
 from tqdm.auto import tqdm
 from joblib import load
 import argparse
+import matplotlib.pyplot as plt
 import warnings
 
 warnings.simplefilter("ignore")
@@ -55,8 +56,6 @@ def getparser():
     parser.add_argument('-out_path', default=None, type=str, help='Path in directory where output images will be saved')
     parser.add_argument('-ps_im_path', default=None, type=str, help='Path in directory where PlanetScope raw images '
                                                                     'are located')
-    parser.add_argument('-figures_out_path', default=None, type=str,
-                        help='Path in directory where figures will be saved')
     parser.add_argument('-date_start', default=None, type=str, help='Start date for image querying: "YYYY-MM-DD"')
     parser.add_argument('-date_end', default=None, type=str, help='End date for image querying: "YYYY-MM-DD"')
     parser.add_argument('-month_start', default=1, type=int, help='Start month for image querying (inclusive), e.g. 5')
@@ -122,6 +121,7 @@ def main():
     ps_im_mosaics_path = os.path.join(out_path, 'PlanetScope', 'mosaics')
     im_classified_path = os.path.join(out_path, 'classified')
     snow_cover_stats_path = os.path.join(out_path, 'snow_cover_stats')
+    figures_out_path = os.path.join(out_path, 'figures')
 
     # -----Import pipeline utilities
     # When running locally, must import from "functions" folder
@@ -194,7 +194,7 @@ def main():
         utils.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
                                        min_aoi_coverage, im_download, s2_toa_im_path, run_pipeline, dataset_dict, site_name,
                                        im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
-                                       figures_out_path, plot_results, verbose)
+                                       figures_out_path, plot_results, verbose, delineate_snowline)
         print(' ')
 
     # ------------------------ #
@@ -220,7 +220,7 @@ def main():
         utils.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
                                        min_aoi_coverage, im_download, s2_sr_im_path, run_pipeline, dataset_dict, site_name,
                                        im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
-                                       figures_out_path, plot_results, verbose)
+                                       figures_out_path, plot_results, verbose, delineate_snowline)
         print(' ')
 
     # ------------------------- #
@@ -246,7 +246,7 @@ def main():
         utils.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
                                        min_aoi_coverage, im_download, l_im_path, run_pipeline, dataset_dict, site_name,
                                        im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
-                                       figures_out_path, plot_results, verbose)
+                                       figures_out_path, plot_results, verbose, delineate_snowline)
         print(' ')
 
     # ------------------------- #
@@ -351,24 +351,21 @@ def main():
                 if type(im_classified) == str:
                     continue
 
-            # -----Delineate snowline(s)
-            # check if snowline already exists in file
-            snowline_fn = im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset + '_snowline.csv'
-            if os.path.exists(os.path.join(snow_cover_stats_path, snowline_fn)):
-                if verbose:
-                    print('Snowline already exists in file, skipping...')
-                    print(' ')
+            # -----Calculate snow cover stats
+            # Check if snow cover stats already exists in file
+            snow_cover_stats_fn = (im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset
+                                   + '_snow_cover_stats.csv')
+            if os.path.exists(os.path.join(snow_cover_stats_path, snow_cover_stats_fn)):
+                # No need to load snow cover stats if it already exists
                 continue
             else:
-                plot_results = True
-                snowline_df = utils.delineate_snowline_from_image(im_classified, site_name, aoi_utm, dem, dataset_dict,
-                                                   dataset, im_date, snowline_fn, snow_cover_stats_path, figures_out_path,
-                                                   plot_results, im_adj, verbose)
-                if verbose:
-                    print('Accumulation Area Ratio =  ', snowline_df['AAR'][0])
+                # Calculate snow cover stats
+                scs_df = utils.calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_adj, im_classified, dem, aoi_utm, 
+                                                          site_name, delineate_snowline, snow_cover_stats_fn, snow_cover_stats_path, 
+                                                          figures_out_path, plot_results, verbose)
+                plt.close()
             if verbose:
                 print(' ')
-        print(' ')
 
     print('Done!')
 

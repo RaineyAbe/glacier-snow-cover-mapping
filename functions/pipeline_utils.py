@@ -204,7 +204,7 @@ def query_gee_for_dem(aoi_utm, site_name, out_path=None):
 
 def query_gee_for_imagery(aoi_utm, dataset, start_date, end_date, start_month, end_month, mask_clouds,
                           percent_aoi_coverage, im_download, out_path, run_pipeline, dataset_dict, site_name,
-                          im_classified_path, snow_cover_stats_path, dem, clf, feature_cols, figures_out_path,
+                          im_classified_path, scs_path, dem, clf, feature_cols, figures_out_path,
                           plot_results, verbose, delineate_snowline=False):
     """
 
@@ -240,7 +240,7 @@ def query_gee_for_imagery(aoi_utm, dataset, start_date, end_date, start_month, e
         Name of site, used for output file names
     im_classified_path: str
         Path in directory where classified images will be saved
-    snow_cover_stats_path: str
+    scs_path: str
         Path in directory where snow cover statistics will be saved
     dem: xarray.Dataset
         Digital elevation model (DEM) over the area of interest
@@ -430,7 +430,7 @@ def query_gee_for_imagery(aoi_utm, dataset, start_date, end_date, start_month, e
         if run_pipeline:
             # -----Run classification pipeline
             apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                          snow_cover_stats_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
+                                          scs_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
                                           figures_out_path, plot_results, verbose, delineate_snowline=delineate_snowline)
         else:
             im_xr_list += [im_xr]
@@ -440,7 +440,7 @@ def query_gee_for_imagery(aoi_utm, dataset, start_date, end_date, start_month, e
 
 def query_gee_for_imagery_yearly(aoi_utm, dataset, start_date, end_date, start_month, end_month, mask_clouds,
                                  percent_aoi_coverage, im_download, out_path, run_pipeline=False, dataset_dict=None,
-                                 site_name=None, im_classified_path=None, snow_cover_stats_path=None, dem=None,
+                                 site_name=None, im_classified_path=None, scs_path=None, dem=None,
                                  clf=None, feature_cols=None, figures_out_path=None, plot_results=None, verbose=False, delineate_snowline=False):
     # -----Define date ranges for querying imagery
     # Convert start_date and end_date to pandas Timestamps
@@ -466,15 +466,15 @@ def query_gee_for_imagery_yearly(aoi_utm, dataset, start_date, end_date, start_m
             date_ranges.append((range_start.strftime('%Y-%m-%d'), range_end.strftime('%Y-%m-%d')))
 
     # -----Return pipeline for each date range
+    im_list = []
     for date_range in date_ranges:
         if verbose:
             print(' ')
             print(date_range[0], date_range[1])
-        im_list = []
         im_list += query_gee_for_imagery(aoi_utm, dataset, date_range[0], date_range[1], start_month, end_month,
                                          mask_clouds, percent_aoi_coverage, im_download, out_path, run_pipeline,
-                                         dataset_dict, site_name, im_classified_path, snow_cover_stats_path, dem, clf,
-                                         feature_cols, figures_out_path, plot_results, verbose)
+                                         dataset_dict, site_name, im_classified_path, scs_path, dem, clf,
+                                         feature_cols, figures_out_path, plot_results, verbose, delineate_snowline)
 
     print('Done!')
 
@@ -669,8 +669,9 @@ def classify_image(im_xr, clf, feature_cols, aoi, dataset_dict, dataset, im_clas
     return im_classified_xr
 
 
-def calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_classified, dem, aoi, site_name='', delineate_snowline=False, 
-                               scs_fn=None, out_path=None, figures_out_path=None, plot_results=False, verbose=True):
+def calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_xr=None, im_classified=None, dem=None, aoi=None, 
+                               site_name='', delineate_snowline=False, scs_fn=None, out_path=None, figures_out_path=None, 
+                               plot_results=False, verbose=True):
     """
     Calculate snow cover statistics, including the area of each image class, the snowline altitude, the transient AAR, 
     and optionally, delineate the snowline. 
@@ -773,8 +774,8 @@ def calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_classified, de
         scs_df.to_pickle(os.path.join(out_path, scs_fn))
         if verbose:
             print('Snowline saved to file: ' + os.path.join(out_path, scs_fn))
-    elif 'csv' in scs_df:
-        scs_df.to_csv(os.path.join(out_path, scs_df), index=False)
+    elif 'csv' in scs_fn:
+        scs_df.to_csv(os.path.join(out_path, scs_fn), index=False)
         if verbose:
             print('Snowline saved to file: ' + os.path.join(out_path, scs_fn))
     else:
@@ -807,13 +808,14 @@ def calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_classified, de
                      extent=(np.min(im_classified.x.data) / 1e3, np.max(im_classified.x.data) / 1e3,
                              np.min(im_classified.y.data) / 1e3, np.max(im_classified.y.data) / 1e3))
         # snowline coordinates
-        if delineate_snowline & (len(snowlines_coords_x) > 0):
-            ax[0].plot(np.divide(snowlines_coords_x, 1e3), np.divide(snowlines_coords_y, 1e3),
-                       '.', color='#f768a1', markersize=2)
-            ax[1].plot(np.divide(snowlines_coords_x, 1e3), np.divide(snowlines_coords_y, 1e3),
-                       '.', color='#f768a1', markersize=2)
-            ax[0].scatter(0, 0, color='#f768a1', s=30, label='Snowline estimate')
-            ax[1].scatter(0, 0, color='#f768a1', s=30, label='Snowline estimate')
+        if delineate_snowline:
+            if (len(snowlines_coords_x) > 0):
+                ax[0].plot(np.divide(snowlines_coords_x, 1e3), np.divide(snowlines_coords_y, 1e3),
+                        '.', color='#f768a1', markersize=2)
+                ax[1].plot(np.divide(snowlines_coords_x, 1e3), np.divide(snowlines_coords_y, 1e3),
+                        '.', color='#f768a1', markersize=2)
+                ax[0].scatter(0, 0, color='#f768a1', s=30, label='Snowline estimate')
+                ax[1].scatter(0, 0, color='#f768a1', s=30, label='Snowline estimate')
         # plot dummy points for legend
         ax[1].scatter(0, 0, color=colors[0], s=30, marker='s', label='Snow')
         ax[1].scatter(0, 0, color=colors[1], s=30, marker='s', label='Shadowed snow')
@@ -1053,7 +1055,7 @@ def calculate_aoi_coverage(im_xr, aoi_gdf):
     return percent_coverage
 
 
-def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path, snow_cover_stats_path,
+def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path, scs_path,
                                   aoi_utm, dem, epsg_utm, clf, feature_cols, figures_out_path,
                                   plot_results, verbose, delineate_snowline=False):
     """
@@ -1071,7 +1073,7 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
         name of site
     im_classified_path: str
         path in directory where classified netCDF images will be saved
-    snow_cover_stats_path: str
+    scs_path: str
         path in directory where snow cover statistics CSV files will be saved
     aoi_utm: geopandas.GeoDataFrame
         area of interest with CRS in local UTM zone
@@ -1108,9 +1110,9 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
             return
 
     # Check if snow cover stats already exists in file
-    snow_cover_stats_fn = (im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset
+    scs_fn = (im_date.replace('-', '').replace(':', '') + '_' + site_name + '_' + dataset
                            + '_snow_cover_stats.csv')
-    if os.path.exists(os.path.join(snow_cover_stats_path, snow_cover_stats_fn)):
+    if os.path.exists(os.path.join(scs_path, scs_fn)):
         # No need to load snow cover stats if it already exists
         return
     else:
@@ -1121,8 +1123,8 @@ def apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_cl
         im_classified = im_classified.rio.write_crs('EPSG:4326').rio.reproject(f'EPSG:{epsg_utm}')
 
         # Calculate snow cover stats
-        scs_df = calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_classified, dem, aoi_utm, 
-                                            site_name, delineate_snowline, snow_cover_stats_fn, snow_cover_stats_path, 
+        scs_df = calculate_snow_cover_stats(dataset_dict, dataset, im_date, im_xr, im_classified, dem, aoi_utm, 
+                                            site_name, delineate_snowline, scs_fn, scs_path, 
                                             figures_out_path, plot_results, verbose)
         plt.close()
 
