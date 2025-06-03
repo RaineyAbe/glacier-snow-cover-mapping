@@ -1229,7 +1229,7 @@ def query_gee_for_image_thumbnail(dataset, dt, aoi_utm):
             "'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. Exiting...")
         return 'N/A'
 
-    # -----Display image, snowline, and AOI on geemap.Map()
+    # -----Display image, snowline, and AOI
     # Reproject the Earth Engine image to UTM projection
     utm_epsg = aoi_utm.crs.to_epsg()  # Get UTM EPSG code from AOI's CRS
     im_col_ee_utm = im_col_ee.map(lambda img: img.reproject(crs=f'EPSG:{utm_epsg}', scale=30))

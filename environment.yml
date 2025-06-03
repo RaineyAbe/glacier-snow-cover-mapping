@@ -4,7 +4,6 @@ channels:
   - defaults
 dependencies:
   - geedim=1.7.1
-  - geemap=0.35.3
   - geopandas
   - h5netcdf
   - ipywidgets
