@@ -1,35 +1,74 @@
 # Installation for `glacier-snow-cover-mapping`
 
-## (Optional) Fork repository for personal use
+## Boise State Borah users
+
+On Borah, we can use `apptainer` to pull Docker images and run sripts in a container. Once logged into Borah, run the following on the command line:
+
+```
+# Load apptainer module
+module load apptainer/1.2.5
+
+# Pull the Docker image if it doesn't exist in scratch/
+cd scratch
+FILE="glacier-snow-cover-mapping_latest.sif"
+if [ ! -f $FILE ]; then
+    apptainer pull docker://raineyabe/glacier-snow-cover-mapping
+else
+    echo "Docker image exists, skipping pull."
+fi
+```
+
+Before you run a script for the first time, you will need to authenticate your Google Earth Engine account. To do this, run Python in the container: 
+
+```
+apptainer run $FILE python # or replace $FILE with "glacier-snow-cover-mapping_latest.sif" if it is no longer defined
+
+# Once in the Python shell
+import ee
+ee.Authenticate(auth_mode='notebook')
+```
+
+Then follow the instructions to authenticate when prompted. This will save an authorization token on your Borah account, and you should be able to initialize Earth Engine without authenticating in future script runs. 
+
+See the `scripts/slurm_example_SITE_ID.bash` file for an example slurm job submission. 
+
+## Docker users
+
+Pull the image from Docker Hub:
+
+`docker pull raineyabe/glacier-snow-cover-mapping`
+
+## Mamba / Conda users
+
+For managing the required Python packages, you can install [Anaconda/Miniconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html) or [Mamba/Micromamba](https://mamba.readthedocs.io/en/latest/index.html). This will allow you to install the environment using the `.yml` file. See the online user guides for [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) or [Mamba](https://mamba.readthedocs.io/en/latest/user_guide/mamba.html) if you are unfamiliar. If using Mamba, replace all instances of `conda` below with `mamba`.
+
+### (Optional) Fork repository for personal use
 To save a copy of the code for personal use, fork the `glacier-snow-cover-mapping` code repository to your personal GitHub account. See [this page](https://docs.github.com/en/get-started/quickstart/fork-a-repo) for instructions on how to fork a GitHub repository.
 
-## 1. Clone code repository
+### 1. Clone code repository
 To clone the `glacier-snow-cover-mapping` repository into your local directory, open a new Terminal window and change directory (`cd`) to where you want it to be stored (which is referred to as the `base_path` in the code). Then, execute the following command:
 
 `git clone https://github.com/RaineyAbe/glacier-snow-cover-mapping.git`
 
 If you forked the code repository to your personal Git account, replace `RaineyAbe` with `YourUserName` in the command above.
 
-## 2. Install Conda or Mamba
-For managing the required Python packages, we recommend downloading either [Miniconda, Anaconda](https://conda.io/projects/conda/en/latest/user-guide/install/macos.html) or [Mamba](https://mamba.readthedocs.io/en/latest/index.html). This will allow you to install the environment directly using the `.yml` file. See the online user guides for [Conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html) or [Mamba](https://mamba.readthedocs.io/en/latest/user_guide/mamba.html) if you are unfamiliar. If using Mamba, replace all instances of `conda` below with `mamba`.
-
-## 3. Install the environment using the .yml file
+### 2. Install the environment using the .yml file
 To ensure all required packages for the notebooks/scripts are installed, we recommend creating a conda/mamba environment using the `environment.yml` file provided by executing the following command:
 
 `conda env create -f environment.yml`
 
-## 4. Activate environment
+### 3. Activate environment
 To activate the environment, execute the following command:
 
 `conda activate glacier-snow-cover-mapping`
 
-## 5. Add environment as an ipykernel
+### 4. If using JupyterLab, add environment as an ipykernel
 
 Run the following command so that you can use the `glacier-snow-cover-mapping` environment in Jupyter Lab:
 
 `python -m ipykernel install --user --name=glacier-snow-cover-mapping`
 
-## Recommended directory structure
+## Recommended directory structure for running the SciKitLearn (SKL) workflow
 The notebooks are set up so that inputs and outputs can be found easily and programmatically. Thus, we recommend that you structure your directory as outlined below. Otherwise, you can modify the file paths and names in the first section of each notebook/script.
 
 _Initial set-up:_ Before running any notebooks

@@ -8,14 +8,10 @@
 figures/
 
 # .zip folders of study area shapefiles
-Inputs-outputs/*.zip
+inputs-outputs/*.zip
 
 # PyCharm files
 .idea*
-
-# Scripts for running on cluster
-scripts/example_slurm_*.bash
-scripts/slurm_*.bash
 
 # Individual images for gif
 figures/SouthCascadeGlacier_example_results_gif/

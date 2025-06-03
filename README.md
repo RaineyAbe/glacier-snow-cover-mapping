@@ -1,10 +1,8 @@
-[![DOI](https://zenodo.org/badge/427402996.svg)](https://zenodo.org/doi/10.5281/zenodo.10616385)
-
 # glacier-snow-cover-mapping
 
-[Rainey Aberle](https://github.com/RaineyAbe) and [Ellyn Enderlin](https://github.com/ellynenderlin), Department of Geosciences, Boise State University
+[Rainey Aberle](https://github.com/RaineyAbe), [Ellyn Enderlin](https://github.com/ellynenderlin), and [Jukes Liu](https://github.com/jukesliu)
 
-Thank you to [Jukes Liu](https://github.com/jukesliu) for their contributions to the PlanetScope image download and processing steps.
+Department of Geosciences, Boise State University
 
 ## Correspondence
 Rainey Aberle (raineyaberle@u.boisestate.edu)
@@ -35,8 +33,6 @@ Please see the [Installation Instructions](https://github.com/RaineyAbe/snow-cov
 Please see the [Basic Workflow Instructions](https://github.com/RaineyAbe/snow-cover-mapping/blob/main/docs/basic_workflow.md) for more detailed instructions.
 
 ## Citation
-
-[![DOI](https://zenodo.org/badge/427402996.svg)](https://zenodo.org/doi/10.5281/zenodo.10616385)
 
 Aberle, R., Enderlin, E., O'Neel, S., Marshall., H.P., Florentine, C., Sass, L., and Dickson, A. (_in prep_) Automated snow cover detection on mountain glaciers using space-borne imagery.
 
