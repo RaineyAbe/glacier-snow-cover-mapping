@@ -54,6 +54,7 @@ def getparser():
                         help='(Optional) Path in directory to digital elevation model')
     parser.add_argument('-dem_fn', default=None, type=str, help='(Optional) Digital elevation model file name')
     parser.add_argument('-out_path', default=None, type=str, help='Path in directory where output images will be saved')
+    parser.add_argument('-figures_out_path', default=None, type=str, help='Path in directory where output figures will be saved')
     parser.add_argument('-ps_im_path', default=None, type=str, help='Path in directory where PlanetScope raw images '
                                                                     'are located')
     parser.add_argument('-date_start', default=None, type=str, help='Start date for image querying: "YYYY-MM-DD"')
@@ -125,13 +126,14 @@ def main():
 
     # -----Import pipeline utilities
     # When running locally, must import from "functions" folder
-    script_path = os.getcwd()
+    #script_path = os.getcwd()
+    script_path = os.path.dirname(os.path.realpath(__file__))
     if "functions" in os.listdir(os.path.join(script_path, '..')):
         sys.path.append(os.path.join(script_path, '..', 'functions'))
     # In Docker image, all files are in "/app" folder
     else:
         sys.path.append(os.path.join(script_path))
-    import pipeline_utils_SKL as utils
+    import pipeline_utils as utils
     import PlanetScope_preprocessing as psp
 
     # -----Load dataset dictionary
