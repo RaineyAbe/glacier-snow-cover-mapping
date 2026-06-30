@@ -83,7 +83,7 @@ def query_gee_for_dem(aoi_utm, site_name, out_path=None):
         print('Transforming elevations from the ellipsoid to the geoid...')
 
         # Load EGM96 model from GEE Assets
-        geoid_model = xr.open_dataset(os.path.join(os.getcwd(), '..', 'inputs-outputs', 'us_nga_egm96_15.tif'))
+        geoid_model = xr.open_dataset(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'inputs-outputs', 'us_nga_egm96_15.tif'))
 
         # Resample geoid model to DEM coordinates
         geoid_model_resampled = geoid_model.interp(x=ds.x, y=ds.y, method='linear')
@@ -142,7 +142,7 @@ def query_gee_for_dem(aoi_utm, site_name, out_path=None):
 
         # -----Check for ArcticDEM coverage over AOI
         # load ArcticDEM_Mosaic_coverage.shp
-        arcticdem_coverage = gpd.read_file(os.path.join(os.getcwd(), '..', 'inputs-outputs', 'ArcticDEM_Mosaic_coverage.shp'))
+        arcticdem_coverage = gpd.read_file(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'inputs-outputs', 'ArcticDEM_Mosaic_coverage.shp'))
         # reproject to optimal UTM zone
         arcticdem_coverage_utm = arcticdem_coverage.to_crs(f'EPSG:{epsg_utm}')
         # check for intersection with AOI
@@ -168,7 +168,7 @@ def query_gee_for_dem(aoi_utm, site_name, out_path=None):
             scale = 30  # spatial resolution [m]
             elevation_source = 'NASADEM (https://developers.google.com/earth-engine/datasets/catalog/NASA_NASADEM_HGT_001)'
             # Check for NASADEM coverage
-            percent_coverage = calculate_percent_image_aoi_coverage(dem, aoi_ee).get('percent_AOI_coverage').getInfo()
+            percent_coverage = calculate_percent_image_aoi_coverage(dem).get('percent_AOI_coverage').getInfo()
             if percent_coverage > 70:
                 coverage = True
 
