@@ -26,6 +26,7 @@ import PIL
 import io
 import wxee as wx
 import rasterio as rio
+import datetime
 
 
 def convert_wgs_to_utm(lon: float, lat: float):
@@ -52,6 +53,103 @@ def convert_wgs_to_utm(lon: float, lat: float):
         return epsg_code
     epsg_code = '327' + utm_band
     return epsg_code
+
+
+def split_date_range(aoi_area, dataset, start_date, end_date, start_month, end_month, verbose):
+    """
+    Split a date range into smaller chunks to mitigate computation time-out based on the area of the AOI:
+        - AOI < 500 km2: split by month
+        - 700 km2 <= AOI < 1100 km2: split by week
+        - AOI >= 1100 km2: split by day
+
+    Enforces dataset availability windows:
+        - Sentinel-2_TOA: available from 2016
+        - Sentinel-2_SR: available from 2019
+        - Landsat 8/9: available from 2013
+
+    For the largest glaciers, user memory limits will still be exceeded, even when querying at daily resolution. 
+    Therefore, this function will also return the image spatial resolution (scale) required to prevent computation time out.
+    For glaciers within the area limits, it will return the default scale for Sentinel-2 (10 m) and Landsat 8/9 (30 m). 
+
+    Parameters
+    ----------
+    aoi_area : float or int
+        AOI area in square meters (e.g., from aoi.area().getInfo()).
+    dataset : str
+        Image dataset name. Supported: "Sentinel-2_TOA", "Sentinel-2_SR", or "Landsat".
+    start_date : str
+        Start date in 'YYYY-MM-DD' format.
+    end_date : str
+        End date in 'YYYY-MM-DD' format.
+    start_month : int
+        Start month (1-12).
+    end_month : int
+        End month (1-12).
+
+    Returns
+    -------
+    ranges : list of tuples
+        List of (start_date, end_date) strings for each valid time window.
+    """
+    # Convert string inputs to datetime objects
+    start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+    end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+
+    # Enforce dataset availability
+    dataset_start_years = {
+        "Sentinel-2_TOA": 2016,
+        "Sentinel-2_SR": 2019,
+        "Landsat": 2013,
+    }
+
+    if dataset not in dataset_start_years:
+        raise ValueError(f"Unsupported dataset: {dataset}")
+
+    min_year = dataset_start_years[dataset]
+    start_date = max(start_date, datetime.date(min_year, 1, 1))  # Clamp to dataset availability
+
+    # List to hold date range tuples
+    ranges = []
+
+    # Determine splitting strategy
+##    if aoi_area < 30e6:
+##        if verbose:
+##            print('AOI area < 30 km2 — splitting date range by month.')
+##        for year in range(start_date.year, end_date.year + 1):
+##            for month in range(start_month, end_month+1):
+##                if (year == start_date.year and month < start_month) or (year == end_date.year and month > end_month):
+##                    continue
+##                start = datetime.date(year, month, 1)
+##                end = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1) if month == 12 else datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
+##                start = max(start, start_date)
+##                end = min(end, end_date)
+##                if start <= end:
+##                    ranges.append((start.isoformat(), end.isoformat()))
+##
+##    else:
+##        if verbose:
+##            print('AOI >= 30 km2 — splitting date range by day.')
+##        current = max(start_date, datetime.date(start_date.year, start_month, 1))
+##        while current < end_date:
+##            if start_month <= current.month <= end_month:
+##                ranges.append((current.isoformat(), (current + datetime.timedelta(days=1)).isoformat()))
+##            current += datetime.timedelta(days=1)
+    print('Splitting date range by month for image query.')
+    for year in range(start_date.year, end_date.year + 1):
+        for month in range(start_month, end_month+1):
+            if (year == start_date.year and month < start_month) or (year == end_date.year and month > end_month):
+                continue
+            start = datetime.date(year, month, 1)
+            end = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1) if month == 12 else datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
+            start = max(start, start_date)
+            end = min(end, end_date)
+            if start <= end:
+                ranges.append((start.isoformat(), end.isoformat()))
+
+    if verbose:
+        print(f"Number of date ranges = {len(ranges)}")
+
+    return ranges
 
 
 def query_gee_for_dem(aoi_utm, site_name, out_path=None):
@@ -267,173 +365,181 @@ def query_gee_for_imagery(aoi_utm, dataset, start_date, end_date, start_month, e
     aoi_ee = ee.Geometry.Polygon(list(zip(aoi_wgs.geometry[0].exterior.coords.xy[0],
                                           aoi_wgs.geometry[0].exterior.coords.xy[1])))
     # Calculate the total area of the AOI
-    aoi_area = aoi_ee.area()
+    aoi_area = aoi_ee.area().getInfo()
 
     # Define dataset-specific properties
     scale = dataset_dict[dataset]['resolution_m']
     analysis_bands = [x for x in feature_cols if x != 'NDSI']
     ndsi_bands = dataset_dict[dataset]['NDSI_bands']
 
-    # Query for imagery
-    if dataset == 'Landsat':
-        # Get full collection for dates and bounds
-        im_col = (ee.ImageCollection("LANDSAT/LC08/C02/T1_L2").merge(ee.ImageCollection("LANDSAT/LC09/C02/T1_L2"))
-                  .filterBounds(aoi_ee)
-                  .filter(ee.Filter.date(start_date, end_date))
-                  .filter(ee.Filter.calendarRange(start_month, end_month, 'month'))
-                  .select(analysis_bands)
-                  )
-        # Apply scale factors
-        def apply_scale_factors(image):
-            adjusted_bands = image.multiply(0.0000275).add(-0.2)
-            return image.addBands(adjusted_bands, None, True).copyProperties(ee.Image(image))
-        im_col = im_col.map(apply_scale_factors)
-    elif (dataset == 'Sentinel-2_SR') or (dataset == 'Sentinel-2_TOA'):
-        # Get full collection for dates and bounds
-        if dataset == 'Sentinel-2_TOA':
-            col_name = "COPERNICUS/S2_HARMONIZED"
-        elif dataset == 'Sentinel-2_SR':
-            col_name = "COPERNICUS/S2_SR_HARMONIZED"
-        im_col = (ee.ImageCollection(col_name)
-                  .filterBounds(aoi_ee)
-                  .filter(ee.Filter.date(start_date, end_date))
-                  .filter(ee.Filter.calendarRange(start_month, end_month, 'month'))
-                  .select(analysis_bands)
-                  )
-        # Apply scale factors
-        def apply_scale_factors(image):
-            adjusted_bands = image.multiply(0.0001)
-            return image.addBands(adjusted_bands, None, True).copyProperties(ee.Image(image))
-        im_col = im_col.map(apply_scale_factors)
-    else:
-        print(
-            "'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
-            "Exiting...")
-        return
+    # Split date range into smaller date ranges as necessary
+    date_ranges = split_date_range(aoi_area, dataset, start_date, end_date, start_month, end_month, verbose=verbose)
+    print(f'Number of date ranges to loop through = '+str(len(date_ranges)))
 
-    # Clip to AOI
-    def clip_to_aoi(image):
-        return image.clip(aoi_ee).copyProperties(ee.Image(image))
+    # Run the workflow for each day in date range separately
+    for date_range in tqdm(date_ranges):
+        print(f'date range for image query = '+str(date_range))
+        # Query for imagery
+        if dataset == 'Landsat':
+            # Get full collection for dates and bounds
+            im_col = (ee.ImageCollection("LANDSAT/LC08/C02/T1_L2").merge(ee.ImageCollection("LANDSAT/LC09/C02/T1_L2"))
+                      .filterBounds(aoi_ee)
+                      .filter(ee.Filter.date(date_range[0], date_range[1]))
+                      .filter(ee.Filter.calendarRange(start_month, end_month, 'month'))
+                      .select(analysis_bands)
+                      )
+            # Apply scale factors
+            def apply_scale_factors(image):
+                adjusted_bands = image.multiply(0.0000275).add(-0.2)
+                return image.addBands(adjusted_bands, None, True).copyProperties(ee.Image(image))
+            im_col = im_col.map(apply_scale_factors)
+        elif (dataset == 'Sentinel-2_SR') or (dataset == 'Sentinel-2_TOA'):
+            # Get full collection for dates and bounds
+            if dataset == 'Sentinel-2_TOA':
+                col_name = "COPERNICUS/S2_HARMONIZED"
+            elif dataset == 'Sentinel-2_SR':
+                col_name = "COPERNICUS/S2_SR_HARMONIZED"
+            im_col = (ee.ImageCollection(col_name)
+                      .filterBounds(aoi_ee)
+                      .filter(ee.Filter.date(date_range[0], date_range[1]))
+                      .filter(ee.Filter.calendarRange(start_month, end_month, 'month'))
+                      .select(analysis_bands)
+                      )
+            # Apply scale factors
+            def apply_scale_factors(image):
+                adjusted_bands = image.multiply(0.0001)
+                return image.addBands(adjusted_bands, None, True).copyProperties(ee.Image(image))
+            im_col = im_col.map(apply_scale_factors)
+        else:
+            print(
+                "'dataset' variable not recognized. Please set to 'Landsat', 'Sentinel-2_TOA', or 'Sentinel-2_SR'. "
+                "Exiting...")
+            return
 
-    im_col = im_col.map(clip_to_aoi)
+        # Clip to AOI
+        def clip_to_aoi(image):
+            return image.clip(aoi_ee).copyProperties(ee.Image(image))
 
-    # Sort by capture date
-    im_col = im_col.sort('system:time_start')
+        im_col = im_col.map(clip_to_aoi)
 
-    # Add NDSI band
-    def calculate_ndsi(image):
-        ndsi = image.expression(
-            '((GREEN - SWIR1) / (GREEN + SWIR1))',
-            {'GREEN': image.select(ndsi_bands[0]),
-             'SWIR1': image.select(ndsi_bands[1])}).rename('NDSI')
-        return image.addBands(ndsi, None, True)
-    im_col = im_col.map(calculate_ndsi)
+        # Sort by capture date
+        im_col = im_col.sort('system:time_start')
 
-    # Apply cloud masking approach from Moussavi et al. (2020): https://doi.org/10.3390/rs12010134
-    if mask_clouds:
-        def create_apply_cloud_mask(image):
-            ndsi = image.select('NDSI')
-            ndsi_mask = ndsi.lt(0.8)
-            swir_mask = image.select(ndsi_bands[1]).gt(0.1)
-            cloud_mask = ndsi_mask.And(swir_mask).rename('cloud_mask')
-            # Add NDSI band
-            image = image.addBands(ndsi, None, True)
-            # Apply cloud mask to image
-            image_masked = image.updateMask(cloud_mask.Not())
-            return image_masked.copyProperties(ee.Image(image))
-        im_col = im_col.map(create_apply_cloud_mask)
+        # Add NDSI band
+        def calculate_ndsi(image):
+            ndsi = image.expression(
+                '((GREEN - SWIR1) / (GREEN + SWIR1))',
+                {'GREEN': image.select(ndsi_bands[0]),
+                 'SWIR1': image.select(ndsi_bands[1])}).rename('NDSI')
+            return image.addBands(ndsi, None, True)
+        im_col = im_col.map(calculate_ndsi)
 
-    # Mosaic images captured same day
-    def mosaic_image_collection_by_date(collection):
-        # Functions to mosaic images for each date
-        def mosaic_by_date(date_str):
-            date = ee.Date(date_str)
-            # Filter images by the date
-            day_images = collection.filter(ee.Filter.date(date, date.advance(1, 'day')))
-            # Mosaic the images for this date
-            return day_images.mosaic().set({'system:time_start': date.millis(), 'date': date_str})
-        # Map over each unique date and create mosaics
-        mosaics_collection = dates.map(lambda d: mosaic_by_date(d))
-        return ee.ImageCollection(mosaics_collection)
-    # Create a list of unique dates in the collection
-    dates = im_col.aggregate_array('system:time_start').map(lambda t: ee.Date(t).format('YYYY-MM-dd')).distinct()
-    im_col_mosaicked = mosaic_image_collection_by_date(im_col)
+        # Apply cloud masking approach from Moussavi et al. (2020): https://doi.org/10.3390/rs12010134
+        if mask_clouds:
+            def create_apply_cloud_mask(image):
+                ndsi = image.select('NDSI')
+                ndsi_mask = ndsi.lt(0.8)
+                swir_mask = image.select(ndsi_bands[1]).gt(0.1)
+                cloud_mask = ndsi_mask.And(swir_mask).rename('cloud_mask')
+                # Add NDSI band
+                image = image.addBands(ndsi, None, True)
+                # Apply cloud mask to image
+                image_masked = image.updateMask(cloud_mask.Not())
+                return image_masked.copyProperties(ee.Image(image))
+            im_col = im_col.map(create_apply_cloud_mask)
 
-    # Calculate % coverage of the AOI
-    def calculate_percent_image_aoi_coverage(ee_image):
-        # Create binary image of masked (0) and unmasked (1) pixels
-        unmasked_pixels = ee_image.mask().reduce(ee.Reducer.allNonZero()).selfMask()
-        # Calculate the area of unmasked pixels in the ROI
-        pixel_area = ee.Image.pixelArea()
-        aoi_area = aoi_ee.area()
-        unmasked_area = unmasked_pixels.multiply(pixel_area).reduceRegion(
-            reducer=ee.Reducer.sum(),
-            geometry=aoi_ee,
-            scale=scale,
-            maxPixels=1e13
-        ).get('all')
-        # Calculate the percentage of the ROI covered by unmasked pixels
-        percentage_unmasked = ee.Number(unmasked_area).divide(aoi_area).multiply(100)
-        return ee_image.set('percent_AOI_coverage', percentage_unmasked).copyProperties(ee_image)
-    im_col_mosaicked = im_col_mosaicked.map(calculate_percent_image_aoi_coverage)
+        # Mosaic images captured same day
+        def mosaic_image_collection_by_date(collection):
+            # Functions to mosaic images for each date
+            def mosaic_by_date(date_str):
+                date = ee.Date(date_str)
+                # Filter images by the date
+                day_images = collection.filter(ee.Filter.date(date, date.advance(1, 'day')))
+                # Mosaic the images for this date
+                return day_images.mosaic().set({'system:time_start': date.millis(), 'date': date_str})
+            # Map over each unique date and create mosaics
+            mosaics_collection = dates.map(lambda d: mosaic_by_date(d))
+            return ee.ImageCollection(mosaics_collection)
+        # Create a list of unique dates in the collection
+        dates = im_col.aggregate_array('system:time_start').map(lambda t: ee.Date(t).format('YYYY-MM-dd')).distinct()
+        im_col_mosaicked = mosaic_image_collection_by_date(im_col)
 
-    # Filter based on percent coverage of the ROI
-    im_col_mosaicked_filtered = im_col_mosaicked.filter(ee.Filter.gte('percent_AOI_coverage', percent_aoi_coverage))
+        # Calculate % coverage of the AOI
+        def calculate_percent_image_aoi_coverage(ee_image):
+            # Create binary image of masked (0) and unmasked (1) pixels
+            unmasked_pixels = ee_image.mask().reduce(ee.Reducer.allNonZero()).selfMask()
+            # Calculate the area of unmasked pixels in the ROI
+            pixel_area = ee.Image.pixelArea()
+            aoi_area = aoi_ee.area()
+            unmasked_area = unmasked_pixels.multiply(pixel_area).reduceRegion(
+                reducer=ee.Reducer.sum(),
+                geometry=aoi_ee,
+                scale=scale,
+                maxPixels=1e13
+            ).get('all')
+            # Calculate the percentage of the ROI covered by unmasked pixels
+            percentage_unmasked = ee.Number(unmasked_area).divide(aoi_area).multiply(100)
+            return ee_image.set('percent_AOI_coverage', percentage_unmasked).copyProperties(ee_image)
+        im_col_mosaicked = im_col_mosaicked.map(calculate_percent_image_aoi_coverage)
 
-    # Determine whether images must be downloaded to file
-    if not im_download:
-        # Estimate image size
-        image_size_bits = aoi_area.getInfo() / (scale ** 2) * len(analysis_bands) * 64
-        image_size_mb = image_size_bits / (8 * 1024 * 1024)
-        # If image size > 10 MB, images must be downloaded
-        if image_size_mb > 10:
-            im_download = True
-            print('Image sizes exceed GEE user limit, images must be downloaded to file.')
-        # else:
-        #     print('Images are within GEE user limit, no need to download.')
-    # Make sure out_path exists if downloading files
-    if im_download:
-        if not os.path.exists(out_path):
-            os.mkdir(out_path)
+        # Filter based on percent coverage of the ROI
+        im_col_mosaicked_filtered = im_col_mosaicked.filter(ee.Filter.gte('percent_AOI_coverage', percent_aoi_coverage))
 
-    # Download images by date
-    im_xr_list = []
-    dates = im_col_mosaicked_filtered.aggregate_array('system:time_start').map(
-        lambda t: ee.Date(t).format('YYYY-MM-dd')).distinct().getInfo()
-    for date in tqdm(dates):
-        im = im_col_mosaicked_filtered.filter(ee.Filter.date(date, str(np.datetime64(date)
-                                                                       + np.timedelta64(1, 'D')))).first()
+        # Determine whether images must be downloaded to file
+        if not im_download:
+            # Estimate image size
+            image_size_bits = aoi_area.getInfo() / (scale ** 2) * len(analysis_bands) * 64
+            image_size_mb = image_size_bits / (8 * 1024 * 1024)
+            # If image size > 10 MB, images must be downloaded
+            if image_size_mb > 10:
+                im_download = True
+                print('Image sizes exceed GEE user limit, images must be downloaded to file.')
+            # else:
+            #     print('Images are within GEE user limit, no need to download.')
+        # Make sure out_path exists if downloading files
         if im_download:
-            im_gd = gd.MaskedImage(im, mask=False)
-            # Determine file name
-            im_fn = os.path.join(out_path, f"{str(date).replace('-','')}_{dataset}.tif")
-            # Download to file
-            download_bands = analysis_bands + ['NDSI']
-            if not os.path.exists(im_fn):
-                im_gd.download(im_fn, region=aoi_ee, scale=scale, bands=download_bands, crs='EPSG:4326')
-            # Open from file
-            im_da = rxr.open_rasterio(im_fn)
-            im_xr = im_da.to_dataset('band')
-            # rename bands
-            im_xr = im_xr.rename({i + 1: name for i, name in enumerate(download_bands)})
-            # set CRS
-            im_xr.rio.write_crs('EPSG:4326', inplace=True)
-            # Add time dimension
-            im_xr = im_xr.expand_dims(dim={'time': [np.datetime64(date, 'ns')]})
-        else:
-            im_xr = im.wx.to_xarray(region=aoi_ee, scale=scale, crs='EPSG:4326')
+            if not os.path.exists(out_path):
+                os.mkdir(out_path)
 
-        # Reproject to UTM for better distance calculations later
-        im_xr = im_xr.rio.write_crs("EPSG:4326")
-        im_xr = im_xr.rio.reproject(f'EPSG:{epsg_utm}', nodata=np.nan)
+        # Download images by date
+        im_xr_list = []
+        dates = im_col_mosaicked_filtered.aggregate_array('system:time_start').map(
+            lambda t: ee.Date(t).format('YYYY-MM-dd')).distinct().getInfo()
+        print(f'number of dates in subsetted image collection '+str(len(dates)))
+        for date in tqdm(dates):
+            im = im_col_mosaicked_filtered.filter(ee.Filter.date(date, str(np.datetime64(date)
+                                                                           + np.timedelta64(1, 'D')))).first()
+            if im_download:
+                im_gd = gd.MaskedImage(im, mask=False)
+                # Determine file name
+                im_fn = os.path.join(out_path, f"{str(date).replace('-','')}_{dataset}.tif")
+                # Download to file
+                download_bands = analysis_bands + ['NDSI']
+                if not os.path.exists(im_fn):
+                    im_gd.download(im_fn, region=aoi_ee, scale=scale, bands=download_bands, crs='EPSG:4326')
+                # Open from file
+                im_da = rxr.open_rasterio(im_fn)
+                im_xr = im_da.to_dataset('band')
+                # rename bands
+                im_xr = im_xr.rename({i + 1: name for i, name in enumerate(download_bands)})
+                # set CRS
+                im_xr.rio.write_crs('EPSG:4326', inplace=True)
+                # Add time dimension
+                im_xr = im_xr.expand_dims(dim={'time': [np.datetime64(date, 'ns')]})
+            else:
+                im_xr = im.wx.to_xarray(region=aoi_ee, scale=scale, crs='EPSG:4326')
 
-        if run_pipeline:
-            # -----Run classification pipeline
-            apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
-                                          scs_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
-                                          figures_out_path, plot_results, verbose, delineate_snowline=delineate_snowline)
-        else:
-            im_xr_list += [im_xr]
+            # Reproject to UTM for better distance calculations later
+            im_xr = im_xr.rio.write_crs("EPSG:4326")
+            im_xr = im_xr.rio.reproject(f'EPSG:{epsg_utm}', nodata=np.nan)
+
+            if run_pipeline:
+                # -----Run classification pipeline
+                apply_classification_pipeline(im_xr, dataset_dict, dataset, site_name, im_classified_path,
+                                              scs_path, aoi_utm, dem, epsg_utm, clf, feature_cols,
+                                              figures_out_path, plot_results, verbose, delineate_snowline=delineate_snowline)
+            else:
+                im_xr_list += [im_xr]
 
     return im_xr_list
 

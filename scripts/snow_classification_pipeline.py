@@ -193,7 +193,7 @@ def main():
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
         run_pipeline = True
-        utils.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
+        utils.query_gee_for_imagery(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
                                        min_aoi_coverage, im_download, s2_toa_im_path, run_pipeline, dataset_dict, site_name,
                                        im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
                                        figures_out_path, plot_results, verbose, delineate_snowline)
@@ -219,7 +219,7 @@ def main():
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
         run_pipeline = True
-        utils.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
+        utils.query_gee_for_imagery(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
                                        min_aoi_coverage, im_download, s2_sr_im_path, run_pipeline, dataset_dict, site_name,
                                        im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
                                        figures_out_path, plot_results, verbose, delineate_snowline)
@@ -245,7 +245,7 @@ def main():
         feature_cols = json.load(open(feature_cols_fn))
         # Run the classification pipeline
         run_pipeline = True
-        utils.query_gee_for_imagery_yearly(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
+        utils.query_gee_for_imagery(aoi_utm, dataset, date_start, date_end, month_start, month_end, mask_clouds,
                                        min_aoi_coverage, im_download, l_im_path, run_pipeline, dataset_dict, site_name,
                                        im_classified_path, snow_cover_stats_path, dem, clf, feature_cols,
                                        figures_out_path, plot_results, verbose, delineate_snowline)
